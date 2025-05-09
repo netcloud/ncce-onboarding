@@ -8,7 +8,7 @@
     Version:        1.5
     Author:         Timo Haldi
     Creation Date:  May 7, 2025
-    Last Updated:   May 7, 2025
+    Last Updated:   May 9, 2025
 #>
 
 # Function to show colorful status messages
@@ -116,7 +116,7 @@ EnsureModule -ModuleName "Az.Accounts"
 EnsureModule -ModuleName "Az.Resources"
 
 # Step 1: Login
-Show-Progress -Step "Logging in to Azure" -Current 1 -Total 7
+Show-Progress -Step "Logging in to Azure" -Current 1 -Total 8
 Write-ColorOutput "Initiating device code authentication. Please authenticate when prompted..." "Magenta"
 
 # Check if already logged in
@@ -135,7 +135,7 @@ $subId = $context.Subscription.Id
 Write-Success "Successfully logged in to tenant: $tenant"
 
 # Step 2: Create Application
-Show-Progress -Step "Creating Azure AD Application" -Current 2 -Total 7
+Show-Progress -Step "Creating Azure AD Application" -Current 2 -Total 8
 $appName = "sp-ncce-global-provisioner"
 $domain = (Get-AzTenant -TenantId $tenant).Domains[0]
 Write-ColorOutput "Creating application '$appName' with verified domain: $domain" "Magenta"
@@ -157,7 +157,7 @@ catch {
 }
 
 # Step 3: Create Service Principal
-Show-Progress -Step "Creating Service Principal" -Current 3 -Total 7
+Show-Progress -Step "Creating Service Principal" -Current 3 -Total 8
 Write-ColorOutput "Creating service principal for application..." "Magenta"
 try {
     $sp = New-AzADServicePrincipal -ApplicationId $app.AppId
@@ -171,7 +171,7 @@ catch {
 }
 
 # Step 4: Create Application Credential
-Show-Progress -Step "Creating Service Principal Credential" -Current 4 -Total 7
+Show-Progress -Step "Creating Service Principal Credential" -Current 4 -Total 8
 Write-ColorOutput "Creating credential for service principal..." "Magenta"
 
 $credentialCreated = $false
@@ -213,7 +213,7 @@ if (-not $credentialCreated) {
 }
 
 # Step 5: Grant Microsoft Graph Permissions
-Show-Progress -Step "Granting application roles" -Current 5 -Total 7
+Show-Progress -Step "Granting application roles" -Current 5 -Total 8
 Write-ColorOutput "Assigning Owner role at subscription level..." "Magenta"
 
 try {
@@ -230,7 +230,7 @@ catch {
 }
 
 # Step 6: Create First Custom Role
-Show-Progress -Step "Creating Subscription Provisioner role" -Current 6 -Total 7
+Show-Progress -Step "Creating Subscription Provisioner role" -Current 6 -Total 8
 Write-ColorOutput "Creating custom role for subscription provisioning..." "Magenta"
 
 # Define role at management group level - IMPORTANT: No DataActions for Management Group assignments
@@ -315,29 +315,14 @@ try {
     } else {
         throw "Azure CLI command did not return a result"
     }
-}
+} 
 catch {
-    Write-Error "Failed to assign '$roleName' role at tenant level: $($_.Exception.Message)"
-    
-    # Try direct API approach as fallback
-    try {
-        Write-ColorOutput "Trying alternative assignment method..." "Magenta"
-        
-        # Generate a unique GUID for the assignment
-        $assignmentId = [System.Guid]::NewGuid().ToString()
-        
-        # Use PowerShell to assign role at the subscription level as fallback
-        $subAssignment = New-AzRoleAssignment -ObjectId $sp.Id -RoleDefinitionName $roleName -Scope "/subscriptions/$subId"
-        Write-Success "Role '$roleName' assigned at subscription level as fallback"
-    }
-    catch {
-        Write-Error "Failed to assign role at subscription level as well: $($_.Exception.Message)"
-        Write-Warning "Please manually assign the '$roleName' role in the Azure portal"
-    }
+    Write-Error "Failed to assign role at tenant level: $($_.Exception.Message)"
+    Write-Warning "You may need to manually assign this role in the Azure portal"
 }
 
 # Step 7: Create Second Custom Role
-Show-Progress -Step "Creating Management Administrator role" -Current 7 -Total 7
+Show-Progress -Step "Creating Management Administrator role" -Current 7 -Total 8
 Write-ColorOutput "Creating custom role for management groups, groups and policies..." "Magenta"
 
 # Define management role - IMPORTANT: No DataActions for Management Group assignments
@@ -414,6 +399,62 @@ catch {
     Write-Warning "You may need to manually assign this role in the Azure portal"
 }
 
+# Step 8: Create Second Service Principal for Token Rotation
+Show-Progress -Step "Creating Token Rotator Service Principal" -Current 8 -Total 8
+Write-ColorOutput "Creating service principal for token rotation..." "Magenta"
+
+$rotatorAppName = "sp-ncce-token-rotator"
+Write-ColorOutput "Creating application '$rotatorAppName'..." "Magenta"
+
+try {
+    $rotatorApp = New-AzADApplication -DisplayName $rotatorAppName `
+                                     -SignInAudience AzureADMyOrg
+    
+    Write-Success "Token Rotator Application created with ID: $($rotatorApp.Id)"
+    Write-Success "Token Rotator Application AppId: $($rotatorApp.AppId)"
+    
+    # Pause briefly to ensure application is fully created before continuing
+    Start-Sleep -Seconds 5
+    
+    # Create Service Principal for the Token Rotator
+    $rotatorSp = New-AzADServicePrincipal -ApplicationId $rotatorApp.AppId
+    Write-Success "Token Rotator Service Principal created with Object ID: $($rotatorSp.Id)"
+    
+    # Create credential for the Token Rotator Service Principal
+    $rotatorCredentialCreated = $false
+    $rotatorPlainPassword = $null
+    
+    # Try with Azure CLI
+    if ($azCliInstalled) {
+        Write-ColorOutput "Using Azure CLI to create token rotator credential..." "Magenta"
+        
+        # Execute Azure CLI command for token rotator
+        $rotatorAzCliCommand = "az ad app credential reset --id $($rotatorApp.AppId) --append --years 1"
+        Write-ColorOutput "Running: $rotatorAzCliCommand" "Gray"
+        
+        $rotatorResult = Invoke-Expression $rotatorAzCliCommand
+        if ($rotatorResult) {
+            $rotatorJsonResult = $rotatorResult | ConvertFrom-Json
+            $rotatorPlainPassword = $rotatorJsonResult.password
+            Write-Success "Credential created successfully for token rotator using Azure CLI"
+            $rotatorCredentialCreated = $true
+            
+            Write-Warning "Store this token rotator secret in a secure location:"
+            Write-ColorOutput "$rotatorPlainPassword" "Red"
+        }
+    } else {
+        Write-Warning "Azure CLI not found. Please create a credential manually for the token rotator."
+    }
+    
+    if (-not $rotatorCredentialCreated) {
+        Write-Error "Could not create credential automatically for token rotator"
+        Write-Warning "Please create a credential manually in the Azure portal for $rotatorAppName"
+    }
+}
+catch {
+    Write-Error "Failed to create token rotator service principal: $($_.Exception.Message)"
+}
+
 # Completion
 Write-Separator
 Write-ColorOutput "✅ Service Principal setup complete!" "Green"
@@ -422,42 +463,11 @@ Write-ColorOutput "App ID: $($app.AppId)" "Cyan"
 Write-ColorOutput "Object ID: $($sp.Id)" "Cyan"
 Write-ColorOutput "Secret: $plainPassword" "Red"
 Write-ColorOutput " "
-Write-ColorOutput "📋 Important: Copy and save the password displayed above in a secure location." "Yellow"
-Write-ColorOutput "The password will not be shown again!" "Red"
-
-# Save information to a file (optional)
-$infoFile = Join-Path -Path $PWD -ChildPath "NCCE-SP-Info-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-try {
-    @"
-NCCE Service Principal Information
-Created: $(Get-Date)
-------------------------------------------
-App Name: $appName
-App ID (Client ID): $($app.AppId)
-Object ID: $($sp.Id)
-Tenant ID: $tenant
-Secret: $plainPassword
-------------------------------------------
-NOTE: This file contains a secret. Keep it secure and delete when no longer needed.
-"@ | Out-File -FilePath $infoFile -Encoding utf8
-
-    Write-Success "Information saved to file: $infoFile"
-} catch {
-    Write-Warning "Could not save information to file: $($_.Exception.Message)"
-}
-
-# Final verification step for credentials
-Write-ColorOutput "Performing final credential verification..." "Magenta"
-try {
-    $finalCredsCheck = Get-AzADAppCredential -ApplicationId $app.AppId -ErrorAction SilentlyContinue
-    if ($null -eq $finalCredsCheck -or $finalCredsCheck.Count -eq 0) {
-        Write-Warning "WARNING: No credentials found in final verification. The credential may not be visible in Azure Portal."
-        Write-Warning "You may need to manually create a client secret in the Azure Portal."
-    } else {
-        Write-Success "Credential verification successful! Found $($finalCredsCheck.Count) credential(s)"
-    }
-} catch {
-    Write-Warning "Could not perform final credential verification: $($_.Exception.Message)"
-}
-
+Write-ColorOutput "Token Rotator App Name: $rotatorAppName" "Cyan"
+Write-ColorOutput "Token Rotator App ID: $($rotatorApp.AppId)" "Cyan"
+Write-ColorOutput "Token Rotator Object ID: $($rotatorSp.Id)" "Cyan"
+Write-ColorOutput "Token Rotator Secret: $rotatorPlainPassword" "Red"
+Write-ColorOutput " "
+Write-ColorOutput "📋 Important: Copy and save the passwords displayed above in a secure location." "Yellow"
+Write-ColorOutput "The passwords will not be shown again!" "Red"
 Write-ColorOutput "Setup completed at $(Get-Date)" "Green"

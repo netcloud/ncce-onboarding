@@ -1,0 +1,18 @@
+NCCE Service Principal Information
+Created: 05/09/2025 13:36:22
+------------------------------------------
+App Name: sp-ncce-global-provisioner
+App ID (Client ID): 14e6063e-810a-4551-b1a5-95d7ae940b3f
+Object ID: e82edbcf-746a-4fa6-a319-852404812358
+Tenant ID: fcf11371-6a84-4a69-851c-d401f85e19ba
+Secret: hmw8Q~7hp2CExBa1Onsk0RG6fRdDvsocP-ZmMaEF
+------------------------------------------
+
+TOKEN ROTATOR SERVICE PRINCIPAL
+------------------------------------------
+App Name: sp-ncce-token-rotator
+App ID (Client ID): 9d5a2fd6-7864-452f-88ce-d5bc74976090
+Object ID: eedea44a-f167-4a71-b1f0-62ee3ba16f19
+Secret: RrI8Q~LcN7Cyl5vYz19Al-3WnKQzT56Q25gyGcXt
+------------------------------------------
+NOTE: This file contains secrets. Keep it secure and delete when no longer needed.
