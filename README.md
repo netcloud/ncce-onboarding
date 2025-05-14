@@ -25,17 +25,35 @@ This script automates the setup of Azure service principals with custom roles re
 - Owner rights at the subscription level
 - Sufficient permissions at tenant root management group
 
+## Required Permissions for Running the NCCE Prerequisites Script
+To execute the setup script end-to-end, your identity (user or service principal) must have permissions in both Azure AD (Microsoft Graph) and Azure Resource Manager (ARM):
+
+
+1. Azure AD (Microsoft Graph) Permissions
+- Application Administrator (or Cloud Application Administrator)
+- - Create, update and delete App registrations and their service principals
+- - Manage application credentials
+- (Optional) Privileged Role Administrator (or Global Administrator)
+- - Consent to application API permissions under “API Permissions”
+
+2. Azure Resource Manager (ARM) Permissions
+- Owner at the subscription level
+- - Create role assignments for the new service principal
+- Owner (or equivalent) at the root management-group level
+- - Create custom roles via New-AzRoleDefinition
+- - Assign custom roles to service principals
+
 ## Installation
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/ncce-prerequisites.git
-   cd ncce-prerequisites
+   git clone git@github.com:netcloud/ncce-onboarding.git
+   cd ncce-onboarding
    ```
 
 2. Run the script:
    ```
-   ./ncce-customer-script.ps1
+   pwsh ncceOnboarding.ps1
    ```
 
 ## Usage
