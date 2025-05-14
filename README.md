@@ -1,6 +1,8 @@
 # NCCE Prerequisites Setup Script
 
-![NCCE Banner](https://netcloud.ch/wp-content/uploads/2020/11/Netcloud_Logo.png)
+![Maintained by Badge](https://img.shields.io/badge/maintained_by-Netcloud-454B95)
+
+![Netcloud logo](https://www.netcloud.ch/wp-content/uploads/2019/11/Netcloud-Logo.png)
 
 ## Overview
 
