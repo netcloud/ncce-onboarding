@@ -73,7 +73,6 @@ The script will create:
 - Service principal
 - Client secret
 - Custom roles and assignments
-- Information file with service principal details (saved locally)
 
 ## Troubleshooting
 
