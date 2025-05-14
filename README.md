@@ -31,17 +31,17 @@ To execute the setup script end-to-end, your identity (user or service principal
 
 1. Azure AD (Microsoft Graph) Permissions
 - Application Administrator (or Cloud Application Administrator)
-- - Create, update and delete App registrations and their service principals
-- - Manage application credentials
+   - Create, update and delete App registrations and their service principals
+   - Manage application credentials
 - (Optional) Privileged Role Administrator (or Global Administrator)
-- - Consent to application API permissions under “API Permissions”
+   - Consent to application API permissions under “API Permissions”
 
 2. Azure Resource Manager (ARM) Permissions
 - Owner at the subscription level
-- - Create role assignments for the new service principal
+   - Create role assignments for the new service principal
 - Owner (or equivalent) at the root management-group level
-- - Create custom roles via New-AzRoleDefinition
-- - Assign custom roles to service principals
+   - Create custom roles via New-AzRoleDefinition
+   - Assign custom roles to service principals
 
 ## Installation
 
