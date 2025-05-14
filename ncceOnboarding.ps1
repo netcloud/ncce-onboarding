@@ -2,240 +2,212 @@
 .SYNOPSIS
     NCCE Prerequisites Setup - Creates a service principal with custom roles for Azure management.
 .DESCRIPTION
-    This script creates an Azure AD application, service principal and assigns custom roles
-    at the tenant root management group level for managing Azure resources.
+    Dieses Skript legt alle benötigten Azure AD Applications, Service Principals und Custom Roles
+    an oder verwendet bereits vorhandene Ressourcen.
 .NOTES
-    Version:        1.5
+    Version:        1.6
     Author:         Timo Haldi
     Creation Date:  May 7, 2025
-    Last Updated:   May 9, 2025
+    Last Updated:   May 14, 2025
 #>
 
-# Function to show colorful status messages
 function Write-ColorOutput {
     param(
-        [Parameter(Mandatory=$true)]
-        [AllowEmptyString()]
-        [string]$Message,
-        [Parameter(Mandatory=$false)]
-        [string]$ForegroundColor = "White"
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Message,
+        [Parameter()][string]$ForegroundColor = "White"
     )
-    
-    $originalFgColor = $host.UI.RawUI.ForegroundColor
+    $orig = $host.UI.RawUI.ForegroundColor
     $host.UI.RawUI.ForegroundColor = $ForegroundColor
     Write-Output $Message
-    $host.UI.RawUI.ForegroundColor = $originalFgColor
+    $host.UI.RawUI.ForegroundColor = $orig
 }
 
 function Show-Banner {
     Clear-Host
-    $bannerText = @"
+    $banner = @"
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
 ║                    NCCE PREREQUISITES SETUP                  ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 "@
-    Write-ColorOutput $bannerText "Cyan"
-    Write-ColorOutput " "
+    Write-ColorOutput $banner "Cyan"
+    Write-ColorOutput ""
 }
 
 function Show-Progress {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Step,
-        [Parameter(Mandatory=$true)]
-        [int]$Current,
-        [Parameter(Mandatory=$true)]
-        [int]$Total
-    )
-    
-    $percentComplete = [math]::Floor(($Current / $Total) * 100)
-    $progressBarWidth = 10
-    $filledWidth = [math]::Floor($percentComplete / (100 / $progressBarWidth))
-    $emptyWidth = $progressBarWidth - $filledWidth
-    $progressBar = "[" + ("■" * $filledWidth) + (" " * $emptyWidth) + "]"
-    
-    Write-ColorOutput "$progressBar $percentComplete% - $Step" "Yellow"
+    param([string]$Step, [int]$Current, [int]$Total)
+    $pct = [math]::Floor(($Current/$Total)*100)
+    $width = 10
+    $filled = [math]::Floor($pct/(100/$width))
+    $empty = $width - $filled
+    $bar = "[" + ("■"* $filled) + (" "* $empty) + "]"
+    Write-ColorOutput "$bar $pct% - $Step" "Yellow"
 }
 
-function Write-Success {
-    param([string]$Message)
-    Write-ColorOutput "✓ $Message" "Green"
-}
+function Write-Success   { param($m) Write-ColorOutput "✓ $m" "Green" }
+function Write-Warning   { param($m) Write-ColorOutput "⚠️ $m" "Yellow" }
+function Write-Error     { param($m) Write-ColorOutput "! $m" "Red" }
+function Write-Separator { Write-ColorOutput "─────────────────────────────────────────────────────────────────" "Gray" }
 
-function Write-Warning {
-    param([string]$Message)
-    Write-ColorOutput "⚠️ $Message" "Yellow"
-}
-
-function Write-Error {
-    param([string]$Message)
-    Write-ColorOutput "! $Message" "Red"
-}
-
-function Write-Separator {
-    Write-ColorOutput "─────────────────────────────────────────────────────────────────" "Gray"
-}
-
-# Check if required modules are available and install if necessary
 function EnsureModule {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$ModuleName
-    )
-    
+    param([string]$ModuleName)
     try {
-        $module = Get-Module -Name $ModuleName -ListAvailable
-        
-        if ($null -eq $module) {
-            Write-ColorOutput "$ModuleName module not found. Attempting to install..." "Magenta"
+        if (-not (Get-Module -Name $ModuleName -ListAvailable)) {
+            Write-ColorOutput "$ModuleName module not found. Installing..." "Magenta"
             Install-Module -Name $ModuleName -Force -Scope CurrentUser -AllowClobber
-            Write-Success "$ModuleName module installed successfully"
+            Write-Success "$ModuleName installed"
         } else {
-            Write-Success "$ModuleName module is already installed"
+            Write-Success "$ModuleName already present"
         }
-        
         return $true
-    }
-    catch {
-        Write-Error "Failed to install $ModuleName module: $($_.Exception.Message)"
+    } catch {
+        Write-Error "Failed to install ${ModuleName}: $($_.Exception.Message)"
         return $false
     }
 }
 
-# Main script
+# === Main ===
 Show-Banner
-
 Write-ColorOutput "Starting Azure Service Principal setup..." "Green"
-Write-ColorOutput "This script will create a service principal with custom roles." "Green"
 Write-Separator
 
-# Check for required modules
 EnsureModule -ModuleName "Az.Accounts"
 EnsureModule -ModuleName "Az.Resources"
 
 # Step 1: Login
-Show-Progress -Step "Logging in to Azure" -Current 1 -Total 8
-Write-ColorOutput "Initiating device code authentication. Please authenticate when prompted..." "Magenta"
-
-# Check if already logged in
-$context = Get-AzContext -ErrorAction SilentlyContinue
-if (-not $context) {
+Show-Progress "Logging in to Azure" 1 9
+Write-ColorOutput "Please authenticate via device code..." "Magenta"
+$ctx = Get-AzContext -ErrorAction SilentlyContinue
+if (-not $ctx) {
     Connect-AzAccount -UseDeviceAuthentication
-    $context = Get-AzContext
-    if (-not $context) {
-        Write-Error "Failed to authenticate to Azure. Exiting."
-        exit 1
-    }
+    $ctx = Get-AzContext
+    if (-not $ctx) { Write-Error "Authentication failed"; exit 1 }
 }
+$tenant = $ctx.Tenant.Id
+$subId  = $ctx.Subscription.Id
+Write-Success "Logged in to tenant: $tenant"
 
-$tenant = $context.Tenant.Id
-$subId = $context.Subscription.Id
-Write-Success "Successfully logged in to tenant: $tenant"
-
-# Step 2: Create Application
-Show-Progress -Step "Creating Azure AD Application" -Current 2 -Total 8
-$appName = "sp-ncce-global-provisioner"
+# Common domain lookup
 $domain = (Get-AzTenant -TenantId $tenant).Domains[0]
-Write-ColorOutput "Creating application '$appName' with verified domain: $domain" "Magenta"
 
-try {
+# === SP1: sp-ncce-global-provisioner ===
+# Step 2: Application
+Show-Progress "Ensure App sp-ncce-global-provisioner" 2 9
+$appName = "sp-ncce-global-provisioner"
+$app = Get-AzADApplication -DisplayName $appName -ErrorAction SilentlyContinue
+if ($app) {
+    Write-Success "Found existing App: $appName (AppId: $($app.AppId))"
+} else {
+    Write-ColorOutput "Creating App: $appName" "Magenta"
     $app = New-AzADApplication -DisplayName $appName `
-                              -IdentifierUris "https://$domain/$appName" `
-                              -SignInAudience AzureADMyOrg
-    
-    Write-Success "Application created with ID: $($app.Id)"
-    Write-Success "Application AppId: $($app.AppId)"
-    
-    # Pause briefly to ensure application is fully created before continuing
-    Start-Sleep -Seconds 5
+                               -IdentifierUris "https://$domain/$appName" `
+                               -SignInAudience AzureADMyOrg
+    Write-Success "App created (AppId: $($app.AppId))"
 }
-catch {
-    Write-Error "Fatal error creating application: $($_.Exception.Message)"
-    exit 1
-}
+Start-Sleep 5
 
-# Step 3: Create Service Principal
-Show-Progress -Step "Creating Service Principal" -Current 3 -Total 8
-Write-ColorOutput "Creating service principal for application..." "Magenta"
-try {
+# Step 3: Service Principal
+Show-Progress "Ensure SP for sp-ncce-global-provisioner" 3 9
+$sp = Get-AzADServicePrincipal -ApplicationId $app.AppId -ErrorAction SilentlyContinue
+if ($sp) {
+    Write-Success "Found existing SP (ObjectId: $($sp.Id))"
+} else {
+    Write-ColorOutput "Creating Service Principal for AppId $($app.AppId)" "Magenta"
     $sp = New-AzADServicePrincipal -ApplicationId $app.AppId
-    
-    Write-Success "Service Principal created with Object ID: $($sp.Id)"
-    Start-Sleep -Seconds 5  # Brief pause for consistency
+    Write-Success "SP created (ObjectId: $($sp.Id))"
 }
-catch {
-    Write-Error "Fatal error creating service principal: $($_.Exception.Message)"
-    exit 1
-}
+Start-Sleep 5
 
-# Step 4: Create Application Credential
-Show-Progress -Step "Creating Service Principal Credential" -Current 4 -Total 8
-Write-ColorOutput "Creating credential for service principal..." "Magenta"
-
-$credentialCreated = $false
-$plainPassword = $null
-
-# Try with Azure CLI - most reliable method
-try {
-    # Check if Azure CLI is installed
-    $azCliInstalled = $null -ne (Get-Command az -ErrorAction SilentlyContinue)
-    
-    if ($azCliInstalled) {
-        Write-ColorOutput "Using Azure CLI to create application credential..." "Magenta"
-        
-        # Execute Azure CLI command targeting APPLICATION
-        $azCliCommand = "az ad app credential reset --id $($app.AppId) --append --years 1"
-        Write-ColorOutput "Running: $azCliCommand" "Gray"
-        
-        $result = Invoke-Expression $azCliCommand
-        if ($result) {
-            $jsonResult = $result | ConvertFrom-Json
-            $plainPassword = $jsonResult.password
-            Write-Success "Credential created successfully on application using Azure CLI"
-            $credentialCreated = $true
-            
-            Write-Warning "Store this secret in a secure location:"
-            Write-ColorOutput "$plainPassword" "Red"
-        }
+# Step 4: Credential
+Show-Progress "Ensure credential for SP1" 4 9
+$creds = Get-AzADAppCredential -ApplicationId $app.AppId -ErrorAction SilentlyContinue
+if ($creds -and $creds.Count -gt 0) {
+    Write-Success "Existing credential(s) found; skipping creation"
+    $plainPassword = $null
+} else {
+    if (Get-Command az -ErrorAction SilentlyContinue) {
+        Write-ColorOutput "Creating new secret via Azure CLI..." "Magenta"
+        $res = az ad app credential reset --id $app.AppId --append --years 1 | ConvertFrom-Json
+        $plainPassword = $res.password
+        Write-Success "Secret created"
+        Write-Warning "SP1 Secret: $plainPassword"
     } else {
-        Write-Warning "Azure CLI not found. Please install Azure CLI or use Azure Portal to create credentials."
+        Write-Warning "Azure CLI not available; please create secret manually in Portal"
+        $plainPassword = $null
     }
 }
-catch {
-    Write-Error "Azure CLI application method failed: $($_.Exception.Message)"
+
+# === SP2: sp-ncce-token-rotator (no roles) ===
+# Step 5: Application
+Show-Progress "Ensure App sp-ncce-token-rotator" 5 9
+$trAppName = "sp-ncce-token-rotator"
+$trApp = Get-AzADApplication -DisplayName $trAppName -ErrorAction SilentlyContinue
+if ($trApp) {
+    Write-Success "Found existing App: $trAppName (AppId: $($trApp.AppId))"
+} else {
+    Write-ColorOutput "Creating App: $trAppName" "Magenta"
+    $trApp = New-AzADApplication -DisplayName $trAppName `
+                                 -IdentifierUris "https://$domain/$trAppName" `
+                                 -SignInAudience AzureADMyOrg
+    Write-Success "App created (AppId: $($trApp.AppId))"
+}
+Start-Sleep 5
+
+# Step 6: Service Principal
+Show-Progress "Ensure SP for sp-ncce-token-rotator" 6 9
+$trSp = Get-AzADServicePrincipal -ApplicationId $trApp.AppId -ErrorAction SilentlyContinue
+if ($trSp) {
+    Write-Success "Found existing SP (ObjectId: $($trSp.Id))"
+} else {
+    Write-ColorOutput "Creating Service Principal for AppId $($trApp.AppId)" "Magenta"
+    $trSp = New-AzADServicePrincipal -ApplicationId $trApp.AppId
+    Write-Success "SP created (ObjectId: $($trSp.Id))"
+}
+Start-Sleep 5
+
+# Step 7: Credential
+Show-Progress "Ensure credential for Token Rotator" 7 9
+$trCreds = Get-AzADAppCredential -ApplicationId $trApp.AppId -ErrorAction SilentlyContinue
+if ($trCreds -and $trCreds.Count -gt 0) {
+    Write-Success "Existing token-rotator credential(s) found; skipping creation"
+    $trPassword = $null
+} else {
+    if (Get-Command az -ErrorAction SilentlyContinue) {
+        Write-ColorOutput "Creating token-rotator secret via Azure CLI..." "Magenta"
+        $res2 = az ad app credential reset --id $trApp.AppId --append --years 1 | ConvertFrom-Json
+        $trPassword = $res2.password
+        Write-Success "Token-Rotator secret created"
+        Write-Warning "Token-Rotator Secret: $trPassword"
+    } else {
+        Write-Warning "Azure CLI not available; please create token-rotator secret manually"
+        $trPassword = $null
+    }
 }
 
-if (-not $credentialCreated) {
-    Write-Error "Could not create credential automatically"
-    Write-Warning "Please create a credential manually in the Azure portal"
+# === SP1 Role Assignments & Custom Roles ===
+# Step 8: Owner at Subscription
+Show-Progress "Ensure Owner role on subscription for SP1" 8 9
+$assign = Get-AzRoleAssignment -ObjectId $sp.Id `
+    -Scope "/subscriptions/$subId" `
+    -RoleDefinitionName "Owner" -ErrorAction SilentlyContinue
+if ($assign) {
+    Write-Success "SP1 already has Owner role on subscription"
+} else {
+    Write-ColorOutput "Assigning Owner role to SP1..." "Magenta"
+    New-AzRoleAssignment -ObjectId $sp.Id -RoleDefinitionName "Owner" -Scope "/subscriptions/$subId" | Out-Null
+    Write-Success "Owner role assigned to SP1"
 }
 
-# Step 5: Grant Microsoft Graph Permissions
-Show-Progress -Step "Granting application roles" -Current 5 -Total 8
-Write-ColorOutput "Assigning Owner role at subscription level..." "Magenta"
-
-try {
-    # Give Owner role at subscription level
-    $roleAssignment = New-AzRoleAssignment -ObjectId $sp.Id -RoleDefinitionName "Owner" -Scope "/subscriptions/$subId"
-    
-    Write-Success "Assigned Owner role to service principal"
-    Write-Warning "Note: For Graph API permissions, manual consent in Azure Portal is required"
-    Write-Warning "Visit the Azure Portal > App Registrations > $appName > API Permissions"
-}
-catch {
-    Write-Error "Unable to assign permissions: $($_.Exception.Message)"
-    Write-Warning "You will need to manually assign these permissions in the Azure portal"
-}
-
-# Step 6: Create First Custom Role
-Show-Progress -Step "Creating Subscription Provisioner role" -Current 6 -Total 8
-Write-ColorOutput "Creating custom role for subscription provisioning..." "Magenta"
-
-# Define role at management group level - IMPORTANT: No DataActions for Management Group assignments
+# Step 9: Custom Roles at ManagementGroup
+Show-Progress "Ensure custom role cr-subscription-provisioner" 9 9
 $roleName = "cr-subscription-provisioner"
-$roleDefinition = @"
+$existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
+if ($existingRole) {
+    Write-Success "Custom role $roleName already exists"
+} else {
+    Write-ColorOutput "Creating custom role $roleName..." "Magenta"
+    $json = @"
 {
   "Name": "$roleName",
   "Description": "Custom role used in the Subscription Orchestrator for resource provisioning.",
@@ -248,13 +220,9 @@ $roleDefinition = @"
     "Microsoft.Authorization/roleDefinitions/read",
     "Microsoft.Authorization/roleDefinitions/delete",
     "Microsoft.Storage/storageAccounts/*",
-    "Microsoft.Storage/storageAccounts/blobServices/containers/delete",
-    "Microsoft.Storage/storageAccounts/blobServices/containers/read",
-    "Microsoft.Storage/storageAccounts/blobServices/containers/write",
+    "Microsoft.Storage/storageAccounts/blobServices/containers/*",
     "Microsoft.Storage/storageAccounts/blobServices/generateUserDelegationKey/action",
-    "Microsoft.Resources/subscriptions/resourceGroups/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/resources/read",
-    "Microsoft.Resources/subscriptions/resources/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/*",
     "Microsoft.Resources/deployments/*",
     "Microsoft.Resources/tags/*"
   ],
@@ -263,210 +231,24 @@ $roleDefinition = @"
   ]
 }
 "@
-
-# Check if role exists with correct definition
-try {
-    $existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
-    if ($existingRole) {
-        Write-Success "Role '$roleName' already exists"
-    } else {
-        # Create role at tenant level
-        $roleFile = [System.IO.Path]::GetTempFileName() + ".json"
-        $roleDefinition | Out-File -FilePath $roleFile -Encoding utf8
-        
-        # Try to create the role with Az PowerShell
-        $role = New-AzRoleDefinition -InputFile $roleFile
-        Write-Success "Created role '$roleName' at tenant level"
-        
-        # Wait for the role to propagate
-        Start-Sleep -Seconds 30
-        
-        # Clean up temp file
-        Remove-Item -Path $roleFile -ErrorAction SilentlyContinue
-    }
-}
-catch {
-    Write-Error "Could not create custom role: $($_.Exception.Message)"
+    $tmp = [IO.Path]::GetTempFileName() + ".json"
+    $json | Out-File -FilePath $tmp -Encoding utf8
+    New-AzRoleDefinition -InputFile $tmp | Out-Null
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+    Write-Success "Created custom role $roleName"
 }
 
-# Role Assignment via Azure CLI
-try {
-    Write-ColorOutput "Using Azure CLI for role assignment at tenant level..." "Magenta"
-    
-    # Make sure we use the correct role name formatting
-    Write-ColorOutput "Verifying role exists before assignment..." "Magenta"
-    $verifyRoleCommand = "az role definition list --name '$roleName' --custom-role-only true --query [].name -o tsv"
-    $roleId = Invoke-Expression $verifyRoleCommand
-    
-    if ([string]::IsNullOrEmpty($roleId)) {
-        Write-Warning "Role not found by name, attempting assignment anyway..."
-    } else {
-        Write-Success "Found role with name: $roleName"
-    }
-    
-    # Assign role using Azure CLI with more debugging
-    Write-ColorOutput "Executing role assignment command..." "Magenta"
-    $cliCommand = "az role assignment create --assignee-object-id '$($sp.Id)' --role '$roleName' --scope '/providers/Microsoft.Management/managementGroups/$tenant'"
-    Write-ColorOutput "Running: $cliCommand" "Gray"
-    
-    $assignmentResult = Invoke-Expression $cliCommand
-    if ($assignmentResult) {
-        Write-Success "Role '$roleName' assigned at tenant level successfully"
-    } else {
-        throw "Azure CLI command did not return a result"
-    }
-} 
-catch {
-    Write-Error "Failed to assign role at tenant level: $($_.Exception.Message)"
-    Write-Warning "You may need to manually assign this role in the Azure portal"
-}
-
-# Step 7: Create Second Custom Role
-Show-Progress -Step "Creating Management Administrator role" -Current 7 -Total 8
-Write-ColorOutput "Creating custom role for management groups, groups and policies..." "Magenta"
-
-# Define management role - IMPORTANT: No DataActions for Management Group assignments
-$roleName = "cr-management-administrator"
-$roleDefinition = @"
-{
-  "Name": "$roleName",
-  "Description": "Custom role for managing Management Groups, Custom Groups and Policies.",
-  "Actions": [
-    "Microsoft.Management/managementGroups/read",
-    "Microsoft.Management/managementGroups/write",
-    "Microsoft.Management/managementGroups/delete",
-    "Microsoft.Management/managementGroups/descendants/read",
-    "Microsoft.Management/managementGroups/subscriptions/write",
-    "Microsoft.Management/managementGroups/settings/read",
-    "Microsoft.Management/managementGroups/settings/write",
-    "Microsoft.Authorization/policyDefinitions/read",
-    "Microsoft.Authorization/policyDefinitions/write",
-    "Microsoft.Authorization/policyDefinitions/delete",
-    "Microsoft.Authorization/policySetDefinitions/read",
-    "Microsoft.Authorization/policySetDefinitions/write",
-    "Microsoft.Authorization/policySetDefinitions/delete",
-    "Microsoft.Authorization/policyAssignments/read",
-    "Microsoft.Authorization/policyAssignments/write",
-    "Microsoft.Authorization/policyAssignments/delete",
-    "Microsoft.Resources/subscriptions/resourceGroups/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/write",
-    "Microsoft.Resources/subscriptions/resourceGroups/delete"
-  ],
-  "AssignableScopes": [
-    "/providers/Microsoft.Management/managementGroups/$tenant"
-  ]
-}
-"@
-
-# Check if role exists
-try {
-    $existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
-    if ($existingRole) {
-        Write-Success "Role '$roleName' already exists"
-    } else {
-        # Create role at tenant level
-        $roleFile = [System.IO.Path]::GetTempFileName() + ".json"
-        $roleDefinition | Out-File -FilePath $roleFile -Encoding utf8
-        
-        # Try to create the role with Az PowerShell
-        $role = New-AzRoleDefinition -InputFile $roleFile
-        Write-Success "Created role '$roleName' at tenant level"
-        
-        # Wait for the role to propagate
-        Start-Sleep -Seconds 30
-        
-        # Clean up temp file
-        Remove-Item -Path $roleFile -ErrorAction SilentlyContinue
-    }
-}
-catch {
-    Write-Error "Could not create custom role: $($_.Exception.Message)"
-}
-
-# Role Assignment via Azure CLI
-try {
-    Write-ColorOutput "Using Azure CLI for role assignment at tenant level..." "Magenta"
-    
-    # Assign role using Azure CLI
-    $cliCommand = "az role assignment create --assignee-object-id '$($sp.Id)' --role '$roleName' --scope '/providers/Microsoft.Management/managementGroups/$tenant'"
-    Write-ColorOutput "Running: $cliCommand" "Gray"
-    
-    Invoke-Expression $cliCommand | Out-Null
-    Write-Success "Role '$roleName' assigned at tenant level"
-}
-catch {
-    Write-Error "Failed to assign role at tenant level: $($_.Exception.Message)"
-    Write-Warning "You may need to manually assign this role in the Azure portal"
-}
-
-# Step 8: Create Second Service Principal for Token Rotation
-Show-Progress -Step "Creating Token Rotator Service Principal" -Current 8 -Total 8
-Write-ColorOutput "Creating service principal for token rotation..." "Magenta"
-
-$rotatorAppName = "sp-ncce-token-rotator"
-Write-ColorOutput "Creating application '$rotatorAppName'..." "Magenta"
-
-try {
-    $rotatorApp = New-AzADApplication -DisplayName $rotatorAppName `
-                                     -SignInAudience AzureADMyOrg
-    
-    Write-Success "Token Rotator Application created with ID: $($rotatorApp.Id)"
-    Write-Success "Token Rotator Application AppId: $($rotatorApp.AppId)"
-    
-    # Pause briefly to ensure application is fully created before continuing
-    Start-Sleep -Seconds 5
-    
-    # Create Service Principal for the Token Rotator
-    $rotatorSp = New-AzADServicePrincipal -ApplicationId $rotatorApp.AppId
-    Write-Success "Token Rotator Service Principal created with Object ID: $($rotatorSp.Id)"
-    
-    # Create credential for the Token Rotator Service Principal
-    $rotatorCredentialCreated = $false
-    $rotatorPlainPassword = $null
-    
-    # Try with Azure CLI
-    if ($azCliInstalled) {
-        Write-ColorOutput "Using Azure CLI to create token rotator credential..." "Magenta"
-        
-        # Execute Azure CLI command for token rotator
-        $rotatorAzCliCommand = "az ad app credential reset --id $($rotatorApp.AppId) --append --years 1"
-        Write-ColorOutput "Running: $rotatorAzCliCommand" "Gray"
-        
-        $rotatorResult = Invoke-Expression $rotatorAzCliCommand
-        if ($rotatorResult) {
-            $rotatorJsonResult = $rotatorResult | ConvertFrom-Json
-            $rotatorPlainPassword = $rotatorJsonResult.password
-            Write-Success "Credential created successfully for token rotator using Azure CLI"
-            $rotatorCredentialCreated = $true
-            
-            Write-Warning "Store this token rotator secret in a secure location:"
-            Write-ColorOutput "$rotatorPlainPassword" "Red"
-        }
-    } else {
-        Write-Warning "Azure CLI not found. Please create a credential manually for the token rotator."
-    }
-    
-    if (-not $rotatorCredentialCreated) {
-        Write-Error "Could not create credential automatically for token rotator"
-        Write-Warning "Please create a credential manually in the Azure portal for $rotatorAppName"
-    }
-}
-catch {
-    Write-Error "Failed to create token rotator service principal: $($_.Exception.Message)"
-}
-
-# Completion
 Write-Separator
 Write-ColorOutput "✅ Service Principal setup complete!" "Green"
 Write-ColorOutput "App Name: $appName" "Cyan"
-Write-ColorOutput "App ID: $($app.AppId)" "Cyan"
-Write-ColorOutput "Object ID: $($sp.Id)" "Cyan"
-Write-ColorOutput "Secret: $plainPassword" "Red"
+Write-ColorOutput "Service Principal Object ID: $($sp.Id)" "Cyan"
+Write-ColorOutput "Service Principal Client ID: $($app.AppId)" "Cyan"
+Write-ColorOutput "Service Principal Client Secret: $plainPassword" "Red"
 Write-ColorOutput " "
-Write-ColorOutput "Token Rotator App Name: $rotatorAppName" "Cyan"
-Write-ColorOutput "Token Rotator App ID: $($rotatorApp.AppId)" "Cyan"
-Write-ColorOutput "Token Rotator Object ID: $($rotatorSp.Id)" "Cyan"
-Write-ColorOutput "Token Rotator Secret: $rotatorPlainPassword" "Red"
+Write-ColorOutput "App Name: $trAppName" "Cyan"
+Write-ColorOutput "Token Rotator Object ID: $($trApp.Id)" "Cyan"
+Write-ColorOutput "Token Rotator Client ID: $($trApp.AppId)" "Cyan"
+Write-ColorOutput "Token Rotator Client Secret: $trPassword" "Red"
 Write-ColorOutput " "
 Write-ColorOutput "📋 Important: Copy and save the passwords displayed above in a secure location." "Yellow"
 Write-ColorOutput "The passwords will not be shown again!" "Red"
