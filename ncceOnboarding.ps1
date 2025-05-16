@@ -126,17 +126,14 @@ if ($creds -and $creds.Count -gt 0) {
     Write-Success "Existing credential(s) found; skipping creation"
     $plainPassword = $null
 } else {
-    if (Get-Command az -ErrorAction SilentlyContinue) {
-        Write-ColorOutput "Creating new secret via Azure CLI..." "Magenta"
-        $res = az ad app credential reset --id $app.AppId --append --years 1 | ConvertFrom-Json
-        $plainPassword = $res.password
-        Write-Success "Secret created"
-        Write-Warning "SP1 Secret: $plainPassword"
-    } else {
-        Write-Warning "Azure CLI not available; please create secret manually in Portal"
-        $plainPassword = $null
-    }
+    Write-ColorOutput "Creating new secret via Az PowerShell..." "Magenta"
+    $endDate = (Get-Date).AddYears(1)
+    $pwdCred = New-AzADAppCredential -ApplicationId $app.AppId -EndDate $endDate
+    $plainPassword = $pwdCred.SecretText
+    Write-Success "Secret created"
+    Write-Warning "SP1 Secret: $plainPassword"
 }
+
 
 # === SP2: sp-ncce-token-rotator (no roles) ===
 # Step 5: Application
@@ -173,16 +170,12 @@ if ($trCreds -and $trCreds.Count -gt 0) {
     Write-Success "Existing token-rotator credential(s) found; skipping creation"
     $trPassword = $null
 } else {
-    if (Get-Command az -ErrorAction SilentlyContinue) {
-        Write-ColorOutput "Creating token-rotator secret via Azure CLI..." "Magenta"
-        $res2 = az ad app credential reset --id $trApp.AppId --append --years 1 | ConvertFrom-Json
-        $trPassword = $res2.password
-        Write-Success "Token-Rotator secret created"
-        Write-Warning "Token-Rotator Secret: $trPassword"
-    } else {
-        Write-Warning "Azure CLI not available; please create token-rotator secret manually"
-        $trPassword = $null
-    }
+    Write-ColorOutput "Creating token-rotator secret via Az PowerShell..." "Magenta"
+    $endDate = (Get-Date).AddYears(1)
+    $trPwdCred = New-AzADAppCredential -ApplicationId $trApp.AppId -EndDate $endDate
+    $trPassword = $trPwdCred.SecretText
+    Write-Success "Token-Rotator secret created"
+    Write-Warning "Token-Rotator Secret: $trPassword"
 }
 
 # === SP1 Role Assignments & Custom Roles ===
