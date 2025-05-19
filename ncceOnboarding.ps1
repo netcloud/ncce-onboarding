@@ -353,44 +353,131 @@ if ($customRoleAssign) {
     }
 }
 
-# Step 12: Add Microsoft Graph API permissions and grant admin consent
-Show-Progress "Adding Microsoft Graph API permissions" 12 12
-Write-ColorOutput "Adding Directory.ReadWrite.All permission to $appName..." "Magenta"
+# Step 12: Assign Application Administrator role to SP using Microsoft Graph
+Show-Progress "Assign Application Administrator role to SP" 12 12
+Write-ColorOutput "Assigning Application Administrator role to $appName via Microsoft Graph..." "Magenta"
 
-# Get Microsoft Graph API service principal
-$graphSp = Get-AzADServicePrincipal -Filter "DisplayName eq 'Microsoft Graph'"
-Write-ColorOutput "Found Microsoft Graph with AppId: $($graphSp.AppId)" "White"
-
-# Get Directory.ReadWrite.All permission
-$permission = $graphSp.AppRole | Where-Object { $_.Value -eq "Directory.ReadWrite.All" }
-if (-not $permission) {
-    Write-Error "Could not find Directory.ReadWrite.All permission"
-    exit 1
+# First, ensure the Microsoft Graph PowerShell modules are installed
+$requiredModules = @("Microsoft.Graph.Authentication", "Microsoft.Graph.Identity.DirectoryManagement")
+$graphModulesInstalled = $true
+foreach ($module in $requiredModules) {
+    if (!(EnsureModule -ModuleName $module)) {
+        $graphModulesInstalled = $false
+        break
+    }
 }
-Write-ColorOutput "Found permission: $($permission.Value) with ID: $($permission.Id)" "White"
 
-# Create the required resource access
-$reqAccess = [Microsoft.Azure.PowerShell.Cmdlets.Resources.MSGraph.Models.ApiV10.MicrosoftGraphRequiredResourceAccess]@{
-    ResourceAppId = $graphSp.AppId
-    ResourceAccess = @(
-        [Microsoft.Azure.PowerShell.Cmdlets.Resources.MSGraph.Models.ApiV10.MicrosoftGraphResourceAccess]@{
-            Id = $permission.Id
-            Type = "Role"  # Role means Application permission
+if (-not $graphModulesInstalled) {
+    Write-Error "Could not install required Microsoft Graph PowerShell modules"
+    Write-ColorOutput "To assign the role manually:" "Yellow"
+    Write-ColorOutput "1. Navigate to Azure Portal -> Microsoft Entra ID -> Roles and administrators" "Yellow"
+    Write-ColorOutput "2. Find and select 'Application Administrator'" "Yellow"
+    Write-ColorOutput "3. Click 'Add assignments' and search for '$appName'" "Yellow"
+} else {
+    try {
+        # Import the modules
+        Import-Module Microsoft.Graph.Authentication
+        Import-Module Microsoft.Graph.Identity.DirectoryManagement
+
+        # Connect to Microsoft Graph with appropriate scopes
+        Write-ColorOutput "Connecting to Microsoft Graph with administrative permissions..." "Magenta"
+        
+        # Disconnect any existing connections to avoid conflicts
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+        
+        # Connect with appropriate scopes for Directory Role Management
+        $scopes = @(
+            "RoleManagement.ReadWrite.Directory",
+            "Directory.Read.All", 
+            "Directory.ReadWrite.All", 
+            "RoleManagement.Read.Directory"
+        )
+        
+        Connect-MgGraph -Scopes $scopes
+        
+        # Step 1: Get all directory roles and find Application Administrator by name
+        Write-ColorOutput "Finding Application Administrator role..." "Magenta"
+        $allRoles = Get-MgDirectoryRole
+        $appAdminRole = $allRoles | Where-Object { $_.DisplayName -eq "Application Administrator" }
+        
+        # If role not found, try to activate it
+        if (-not $appAdminRole) {
+            Write-ColorOutput "Application Administrator role not found, trying to activate it..." "Yellow"
+            
+            # Get the role template
+            $roleTemplates = Get-MgDirectoryRoleTemplate
+            $appAdminTemplate = $roleTemplates | Where-Object { $_.DisplayName -eq "Application Administrator" }
+            
+            if ($appAdminTemplate) {
+                try {
+                    # Try to activate the role
+                    $params = @{
+                        "roleTemplateId" = $appAdminTemplate.Id
+                    }
+                    
+                    Write-ColorOutput "Activating Application Administrator role..." "Magenta"
+                    $newRole = New-MgDirectoryRole -BodyParameter $params -ErrorAction Stop
+                    Write-Success "Application Administrator role activated"
+                    $appAdminRole = $newRole
+                }
+                catch {
+                    # If we get a conflict, the role is already active but not being returned properly
+                    # Re-query all roles
+                    if ($_.Exception.Message -like "*A conflicting object*") {
+                        Write-ColorOutput "Role already exists. Re-checking roles..." "Yellow"
+                        Start-Sleep -Seconds 2  # Brief pause to allow for any replication
+                        $allRoles = Get-MgDirectoryRole
+                        $appAdminRole = $allRoles | Where-Object { $_.DisplayName -eq "Application Administrator" }
+                    }
+                    else {
+                        throw $_
+                    }
+                }
+            }
+            else {
+                throw "Could not find Application Administrator role template"
+            }
         }
-    )
+        
+        # Check if we now have a valid role
+        if ($appAdminRole -and $appAdminRole.Id) {
+            Write-Success "Found Application Administrator role with ID: $($appAdminRole.Id)"
+            
+            # Check if SP is already a member
+            Write-ColorOutput "Checking existing role members..." "Magenta"
+            $members = Get-MgDirectoryRoleMember -DirectoryRoleId $appAdminRole.Id
+            $spIsMember = $members | Where-Object { $_.Id -eq $sp.Id }
+            
+            if ($spIsMember) {
+                Write-Success "Service Principal is already a member of the Application Administrator role"
+            }
+            else {
+                # Add the service principal to the role
+                Write-ColorOutput "Adding service principal to Application Administrator role..." "Magenta"
+                $params = @{
+                    "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)"
+                }
+                
+                New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params
+                Write-Success "Service Principal assigned to Application Administrator role"
+            }
+        }
+        else {
+            throw "Could not find or activate Application Administrator role"
+        }
+        
+        # Disconnect from Microsoft Graph
+        Disconnect-MgGraph | Out-Null
+        Write-Success "Disconnected from Microsoft Graph"
+    }
+    catch {
+        Write-Error "Failed to assign Application Administrator role: $($_.Exception.Message)"
+        Write-ColorOutput "For manual assignment:" "Yellow"
+        Write-ColorOutput "1. Navigate to Azure Portal -> Microsoft Entra ID -> Roles and administrators" "Yellow"
+        Write-ColorOutput "2. Find and select 'Application Administrator'" "Yellow"
+        Write-ColorOutput "3. Click 'Add assignments' and search for '$appName'" "Yellow"
+    }
 }
-
-# Update the application with the required permissions
-Update-AzADApplication -ObjectId $app.Id -RequiredResourceAccess @($reqAccess)
-Write-Success "Added Directory.ReadWrite.All permission to application"
-
-Write-ColorOutput "Important: Admin consent must be granted manually in the Azure Portal" "Yellow"
-Write-ColorOutput "1. Navigate to Azure Portal -> Azure Active Directory -> App registrations" "Yellow"
-Write-ColorOutput "2. Select $appName -> API permissions" "Yellow"
-Write-ColorOutput "3. Click 'Grant admin consent for <your-tenant-name>'" "Yellow"
-Write-ColorOutput " " "Yellow"
-Write-Warning "The script cannot automatically grant admin consent due to API limitations"
-Write-ColorOutput "Continuing with the rest of the setup..." "Magenta"
 
 Write-Separator
 Write-ColorOutput "✅ Service Principal setup complete!" "Green"
