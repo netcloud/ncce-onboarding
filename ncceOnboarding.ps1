@@ -304,7 +304,9 @@ if ($existingRoleMgmt) {
     "Microsoft.Authorization/policyAssignments/delete",
     "Microsoft.Resources/subscriptions/resourceGroups/read",
     "Microsoft.Resources/subscriptions/resourceGroups/write",
-    "Microsoft.Resources/subscriptions/resourceGroups/delete"
+    "Microsoft.Resources/subscriptions/resourceGroups/delete",
+    "Microsoft.Management/register/action",
+    "Microsoft.Resources/subscriptions/read"
   ],
   "AssignableScopes": [
     "$mgScope"
@@ -454,12 +456,24 @@ if (-not $graphModulesInstalled) {
             else {
                 # Add the service principal to the role
                 Write-ColorOutput "Adding service principal to Application Administrator role..." "Magenta"
-                $params = @{
-                    "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)"
+                try {
+                    $params = @{
+                        "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)"
+                    }
+                    
+                    New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params
+                    Write-Success "Service Principal assigned to Application Administrator role"
                 }
-                
-                New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params
-                Write-Success "Service Principal assigned to Application Administrator role"
+                catch {
+                    # If the error is that the member already exists, consider it a success
+                    if ($_.Exception.Message -like "*One or more added object references already exist*") {
+                        Write-Success "Service Principal is already a member of the Application Administrator role"
+                    }
+                    else {
+                        # For other errors, rethrow
+                        throw $_
+                    }
+                }
             }
         }
         else {
