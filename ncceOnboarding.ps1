@@ -5,10 +5,10 @@
     Dieses Skript legt alle benötigten Azure AD Applications, Service Principals und Custom Roles
     an oder verwendet bereits vorhandene Ressourcen.
 .NOTES
-    Version:        1.6
+    Version:        1.7
     Author:         Timo Haldi
     Creation Date:  May 7, 2025
-    Last Updated:   May 14, 2025
+    Last Updated:   May 19, 2025
 #>
 
 function Write-ColorOutput {
@@ -76,7 +76,7 @@ EnsureModule -ModuleName "Az.Accounts"
 EnsureModule -ModuleName "Az.Resources"
 
 # Step 1: Login
-Show-Progress "Logging in to Azure" 1 9
+Show-Progress "Logging in to Azure" 1 10
 Write-ColorOutput "Please authenticate via device code..." "Magenta"
 $ctx = Get-AzContext -ErrorAction SilentlyContinue
 if (-not $ctx) {
@@ -93,7 +93,7 @@ $domain = (Get-AzTenant -TenantId $tenant).Domains[0]
 
 # === SP1: sp-ncce-global-provisioner ===
 # Step 2: Application
-Show-Progress "Ensure App sp-ncce-global-provisioner" 2 9
+Show-Progress "Ensure App sp-ncce-global-provisioner" 2 10
 $appName = "sp-ncce-global-provisioner"
 $app = Get-AzADApplication -DisplayName $appName -ErrorAction SilentlyContinue
 if ($app) {
@@ -108,7 +108,7 @@ if ($app) {
 Start-Sleep 5
 
 # Step 3: Service Principal
-Show-Progress "Ensure SP for sp-ncce-global-provisioner" 3 9
+Show-Progress "Ensure SP for sp-ncce-global-provisioner" 3 10
 $sp = Get-AzADServicePrincipal -ApplicationId $app.AppId -ErrorAction SilentlyContinue
 if ($sp) {
     Write-Success "Found existing SP (ObjectId: $($sp.Id))"
@@ -120,7 +120,7 @@ if ($sp) {
 Start-Sleep 5
 
 # Step 4: Credential
-Show-Progress "Ensure credential for SP1" 4 9
+Show-Progress "Ensure credential for SP1" 4 10
 $creds = Get-AzADAppCredential -ApplicationId $app.AppId -ErrorAction SilentlyContinue
 if ($creds -and $creds.Count -gt 0) {
     Write-Success "Existing credential(s) found; skipping creation"
@@ -137,7 +137,7 @@ if ($creds -and $creds.Count -gt 0) {
 
 # === SP2: sp-ncce-token-rotator (no roles) ===
 # Step 5: Application
-Show-Progress "Ensure App sp-ncce-token-rotator" 5 9
+Show-Progress "Ensure App sp-ncce-token-rotator" 5 10
 $trAppName = "sp-ncce-token-rotator"
 $trApp = Get-AzADApplication -DisplayName $trAppName -ErrorAction SilentlyContinue
 if ($trApp) {
@@ -152,7 +152,7 @@ if ($trApp) {
 Start-Sleep 5
 
 # Step 6: Service Principal
-Show-Progress "Ensure SP for sp-ncce-token-rotator" 6 9
+Show-Progress "Ensure SP for sp-ncce-token-rotator" 6 10
 $trSp = Get-AzADServicePrincipal -ApplicationId $trApp.AppId -ErrorAction SilentlyContinue
 if ($trSp) {
     Write-Success "Found existing SP (ObjectId: $($trSp.Id))"
@@ -164,7 +164,7 @@ if ($trSp) {
 Start-Sleep 5
 
 # Step 7: Credential
-Show-Progress "Ensure credential for Token Rotator" 7 9
+Show-Progress "Ensure credential for Token Rotator" 7 10
 $trCreds = Get-AzADAppCredential -ApplicationId $trApp.AppId -ErrorAction SilentlyContinue
 if ($trCreds -and $trCreds.Count -gt 0) {
     Write-Success "Existing token-rotator credential(s) found; skipping creation"
@@ -180,7 +180,7 @@ if ($trCreds -and $trCreds.Count -gt 0) {
 
 # === SP1 Role Assignments & Custom Roles ===
 # Step 8: Owner at Subscription
-Show-Progress "Ensure Owner role on subscription for SP1" 8 9
+Show-Progress "Ensure Owner role on subscription for SP1" 8 10
 $assign = Get-AzRoleAssignment -ObjectId $sp.Id `
     -Scope "/subscriptions/$subId" `
     -RoleDefinitionName "Owner" -ErrorAction SilentlyContinue
@@ -193,13 +193,28 @@ if ($assign) {
 }
 
 # Step 9: Custom Roles at ManagementGroup
-Show-Progress "Ensure custom role cr-subscription-provisioner" 9 9
+Show-Progress "Ensure custom role cr-subscription-provisioner" 9 11
 $roleName = "cr-subscription-provisioner"
 $existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
 if ($existingRole) {
     Write-Success "Custom role $roleName already exists"
+    Write-ColorOutput "Existing role scopes: $($existingRole.AssignableScopes -join ', ')" "White"
 } else {
-    Write-ColorOutput "Creating custom role $roleName..." "Magenta"
+    Write-ColorOutput "Creating custom role $roleName at Tenant Root Group level..." "Magenta"
+    
+    # Check if user has access to the Management Group
+    $mgmtGroupAccess = $false
+    try {
+        Get-AzManagementGroup -GroupId $tenant -ErrorAction Stop | Out-Null
+        $mgmtGroupAccess = $true
+        Write-Success "Access to Tenant Root Management Group confirmed"
+    }
+    catch {
+        Write-Warning "Cannot access Tenant Root Management Group: $($_.Exception.Message)"
+        Write-ColorOutput "Will attempt to create role but it may fail" "Yellow"
+    }
+    
+    $mgScope = "/providers/Microsoft.Management/managementGroups/$tenant"
     $json = @"
 {
   "Name": "$roleName",
@@ -220,16 +235,90 @@ if ($existingRole) {
     "Microsoft.Resources/tags/*"
   ],
   "AssignableScopes": [
-    "/providers/Microsoft.Management/managementGroups/$tenant"
+    "$mgScope"
   ]
 }
 "@
     $tmp = [IO.Path]::GetTempFileName() + ".json"
     $json | Out-File -FilePath $tmp -Encoding utf8
-    New-AzRoleDefinition -InputFile $tmp | Out-Null
-    Remove-Item $tmp -ErrorAction SilentlyContinue
-    Write-Success "Created custom role $roleName"
+    
+    try {
+        $newRole = New-AzRoleDefinition -InputFile $tmp -ErrorAction Stop
+        Write-Success "Created custom role $roleName at Tenant Root Group level"
+    }
+    catch {
+        Write-Error "Failed to create role at Tenant Root Group: $($_.Exception.Message)"
+        Write-ColorOutput "To create the role manually with Tenant Root Group scope:" "Yellow"
+        Write-ColorOutput "1. Save this JSON to a file:" "Yellow"
+        Write-ColorOutput $json "White"
+        Write-ColorOutput "2. Run: New-AzRoleDefinition -InputFile <path-to-file>" "Yellow"
+    }
+    finally {
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+    }
 }
+
+# Step 10: Assign custom role to SP at Tenant Root Group level
+Show-Progress "Assign custom role to SP at Tenant Root Group" 10 11
+$mgScope = "/providers/Microsoft.Management/managementGroups/$tenant"
+$customRoleAssign = Get-AzRoleAssignment -ObjectId $sp.Id `
+    -Scope $mgScope `
+    -RoleDefinitionName $roleName -ErrorAction SilentlyContinue
+if ($customRoleAssign) {
+    Write-Success "SP1 already has $roleName role at Tenant Root Group level"
+} else {
+    Write-ColorOutput "Assigning $roleName role to SP1 at Tenant Root Group level..." "Magenta"
+    try {
+        New-AzRoleAssignment -ObjectId $sp.Id -RoleDefinitionName $roleName -Scope $mgScope -ErrorAction Stop | Out-Null
+        Write-Success "$roleName role assigned to SP1 at Tenant Root Group level"
+    }
+    catch {
+        Write-Error "Failed to assign $roleName at Tenant Root Group level: $($_.Exception.Message)"
+        Write-ColorOutput "To assign the role manually:" "Yellow"
+        Write-ColorOutput "1. Navigate to Azure Portal -> Management Groups -> $tenant" "Yellow"
+        Write-ColorOutput "2. Select 'Access control (IAM)' -> 'Add role assignment'" "Yellow"
+        Write-ColorOutput "3. Select role '$roleName', assign to '$appName'" "Yellow"
+    }
+}
+
+# Step 11: Add Microsoft Graph API permissions and grant admin consent
+Show-Progress "Adding Microsoft Graph API permissions" 11 11
+Write-ColorOutput "Adding Directory.ReadWrite.All permission to $appName..." "Magenta"
+
+# Get Microsoft Graph API service principal
+$graphSp = Get-AzADServicePrincipal -Filter "DisplayName eq 'Microsoft Graph'"
+Write-ColorOutput "Found Microsoft Graph with AppId: $($graphSp.AppId)" "White"
+
+# Get Directory.ReadWrite.All permission
+$permission = $graphSp.AppRole | Where-Object { $_.Value -eq "Directory.ReadWrite.All" }
+if (-not $permission) {
+    Write-Error "Could not find Directory.ReadWrite.All permission"
+    exit 1
+}
+Write-ColorOutput "Found permission: $($permission.Value) with ID: $($permission.Id)" "White"
+
+# Create the required resource access
+$reqAccess = [Microsoft.Azure.PowerShell.Cmdlets.Resources.MSGraph.Models.ApiV10.MicrosoftGraphRequiredResourceAccess]@{
+    ResourceAppId = $graphSp.AppId
+    ResourceAccess = @(
+        [Microsoft.Azure.PowerShell.Cmdlets.Resources.MSGraph.Models.ApiV10.MicrosoftGraphResourceAccess]@{
+            Id = $permission.Id
+            Type = "Role"  # Role means Application permission
+        }
+    )
+}
+
+# Update the application with the required permissions
+Update-AzADApplication -ObjectId $app.Id -RequiredResourceAccess @($reqAccess)
+Write-Success "Added Directory.ReadWrite.All permission to application"
+
+Write-ColorOutput "Important: Admin consent must be granted manually in the Azure Portal" "Yellow"
+Write-ColorOutput "1. Navigate to Azure Portal -> Azure Active Directory -> App registrations" "Yellow"
+Write-ColorOutput "2. Select $appName -> API permissions" "Yellow"
+Write-ColorOutput "3. Click 'Grant admin consent for <your-tenant-name>'" "Yellow"
+Write-ColorOutput " " "Yellow"
+Write-Warning "The script cannot automatically grant admin consent due to API limitations"
+Write-ColorOutput "Continuing with the rest of the setup..." "Magenta"
 
 Write-Separator
 Write-ColorOutput "✅ Service Principal setup complete!" "Green"
