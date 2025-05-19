@@ -192,8 +192,8 @@ if ($assign) {
     Write-Success "Owner role assigned to SP1"
 }
 
-# Step 9: Custom Roles at ManagementGroup
-Show-Progress "Ensure custom role cr-subscription-provisioner" 9 11
+# Step 9: Custom Roles at ManagementGroup - Subscription Provisioner
+Show-Progress "Ensure custom role cr-subscription-provisioner" 9 12
 $roleName = "cr-subscription-provisioner"
 $existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
 if ($existingRole) {
@@ -258,8 +258,80 @@ if ($existingRole) {
     }
 }
 
-# Step 10: Assign custom role to SP at Tenant Root Group level
-Show-Progress "Assign custom role to SP at Tenant Root Group" 10 11
+# Step 10: Custom Roles at ManagementGroup - Management Administrator
+Show-Progress "Ensure custom role cr-management-administrator" 10 12
+$roleNameMgmt = "cr-management-administrator"
+$existingRoleMgmt = Get-AzRoleDefinition -Name $roleNameMgmt -ErrorAction SilentlyContinue
+if ($existingRoleMgmt) {
+    Write-Success "Custom role $roleNameMgmt already exists"
+    Write-ColorOutput "Existing role scopes: $($existingRoleMgmt.AssignableScopes -join ', ')" "White"
+} else {
+    Write-ColorOutput "Creating custom role $roleNameMgmt at Tenant Root Group level..." "Magenta"
+    
+    # Check if user has access to the Management Group
+    $mgmtGroupAccess = $false
+    try {
+        Get-AzManagementGroup -GroupId $tenant -ErrorAction Stop | Out-Null
+        $mgmtGroupAccess = $true
+        Write-Success "Access to Tenant Root Management Group confirmed"
+    }
+    catch {
+        Write-Warning "Cannot access Tenant Root Management Group: $($_.Exception.Message)"
+        Write-ColorOutput "Will attempt to create role but it may fail" "Yellow"
+    }
+    
+    $mgScope = "/providers/Microsoft.Management/managementGroups/$tenant"
+    $jsonMgmt = @"
+{
+  "Name": "$roleNameMgmt",
+  "Description": "Custom role for managing Management Groups, Custom Groups and Policies.",
+  "Actions": [
+    "Microsoft.Management/managementGroups/read",
+    "Microsoft.Management/managementGroups/write",
+    "Microsoft.Management/managementGroups/delete",
+    "Microsoft.Management/managementGroups/descendants/read",
+    "Microsoft.Management/managementGroups/subscriptions/write",
+    "Microsoft.Management/managementGroups/settings/read",
+    "Microsoft.Management/managementGroups/settings/write",
+    "Microsoft.Authorization/policyDefinitions/read",
+    "Microsoft.Authorization/policyDefinitions/write",
+    "Microsoft.Authorization/policyDefinitions/delete",
+    "Microsoft.Authorization/policySetDefinitions/read",
+    "Microsoft.Authorization/policySetDefinitions/write",
+    "Microsoft.Authorization/policySetDefinitions/delete",
+    "Microsoft.Authorization/policyAssignments/read",
+    "Microsoft.Authorization/policyAssignments/write",
+    "Microsoft.Authorization/policyAssignments/delete",
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/write",
+    "Microsoft.Resources/subscriptions/resourceGroups/delete"
+  ],
+  "AssignableScopes": [
+    "$mgScope"
+  ]
+}
+"@
+    $tmpMgmt = [IO.Path]::GetTempFileName() + ".json"
+    $jsonMgmt | Out-File -FilePath $tmpMgmt -Encoding utf8
+    
+    try {
+        $newRoleMgmt = New-AzRoleDefinition -InputFile $tmpMgmt -ErrorAction Stop
+        Write-Success "Created custom role $roleNameMgmt at Tenant Root Group level"
+    }
+    catch {
+        Write-Error "Failed to create role at Tenant Root Group: $($_.Exception.Message)"
+        Write-ColorOutput "To create the role manually with Tenant Root Group scope:" "Yellow"
+        Write-ColorOutput "1. Save this JSON to a file:" "Yellow"
+        Write-ColorOutput $jsonMgmt "White"
+        Write-ColorOutput "2. Run: New-AzRoleDefinition -InputFile <path-to-file>" "Yellow"
+    }
+    finally {
+        Remove-Item $tmpMgmt -ErrorAction SilentlyContinue
+    }
+}
+
+# Step 11: Assign custom role to SP at Tenant Root Group level
+Show-Progress "Assign custom role to SP at Tenant Root Group" 11 12
 $mgScope = "/providers/Microsoft.Management/managementGroups/$tenant"
 $customRoleAssign = Get-AzRoleAssignment -ObjectId $sp.Id `
     -Scope $mgScope `
@@ -281,8 +353,8 @@ if ($customRoleAssign) {
     }
 }
 
-# Step 11: Add Microsoft Graph API permissions and grant admin consent
-Show-Progress "Adding Microsoft Graph API permissions" 11 11
+# Step 12: Add Microsoft Graph API permissions and grant admin consent
+Show-Progress "Adding Microsoft Graph API permissions" 12 12
 Write-ColorOutput "Adding Directory.ReadWrite.All permission to $appName..." "Magenta"
 
 # Get Microsoft Graph API service principal
