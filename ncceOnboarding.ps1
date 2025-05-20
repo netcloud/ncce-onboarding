@@ -121,7 +121,7 @@ $domain = (Get-AzTenant -TenantId $tenant).Domains[0]
 # === SP1: sp-ncce-global-provisioner ===
 # Step 2: Application
 Show-Progress "Ensure App sp-ncce-global-provisioner" 2 13
-$appName = "sp-ncce-global-provisioner2"
+$appName = "sp-ncce-global-provisioner"
 $app = Get-AzADApplication -DisplayName $appName -ErrorAction SilentlyContinue
 if ($app) {
     Write-Success "Found existing App: $appName (AppId: $($app.AppId))"
@@ -164,7 +164,7 @@ if ($creds -and $creds.Count -gt 0) {
 # === SP2: sp-ncce-token-rotator (no roles) ===
 # Step 5: Application
 Show-Progress "Ensure App sp-ncce-token-rotator" 5 13
-$trAppName = "sp-ncce-token-rotator2"
+$trAppName = "sp-ncce-token-rotator"
 $trApp = Get-AzADApplication -DisplayName $trAppName -ErrorAction SilentlyContinue
 if ($trApp) {
     Write-Success "Found existing App: $trAppName (AppId: $($trApp.AppId))"
@@ -362,7 +362,7 @@ if ($assign) {
 
 # Step 10: Custom Roles at ManagementGroup - Subscription Provisioner
 Show-Progress "Ensure custom role cr-subscription-provisioner" 10 13
-$roleName = "cr-subscription-provisioner2"
+$roleName = "cr-subscription-provisioner"
 $existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
 if ($existingRole) {
     Write-Success "Custom role $roleName already exists"
@@ -428,7 +428,7 @@ if ($existingRole) {
 
 # Step 11: Custom Roles at ManagementGroup - Management Administrator
 Show-Progress "Ensure custom role cr-management-administrator" 11 13
-$roleNameMgmt = "cr-management-administrator2"
+$roleNameMgmt = "cr-management-administrator"
 $existingRoleMgmt = Get-AzRoleDefinition -Name $roleNameMgmt -ErrorAction SilentlyContinue
 if ($existingRoleMgmt) {
     Write-Success "Custom role $roleNameMgmt already exists"
