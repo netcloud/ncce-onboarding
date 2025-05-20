@@ -5,10 +5,10 @@
     Dieses Skript legt alle benötigten Azure AD Applications, Service Principals und Custom Roles
     an oder verwendet bereits vorhandene Ressourcen.
 .NOTES
-    Version:        1.7
+    Version:        1.8
     Author:         Timo Haldi
     Creation Date:  May 7, 2025
-    Last Updated:   May 19, 2025
+    Last Updated:   May 20, 2025
 #>
 
 function Write-ColorOutput {
@@ -72,29 +72,56 @@ Show-Banner
 Write-ColorOutput "Starting Azure Service Principal setup..." "Green"
 Write-Separator
 
+# Ensure required modules for Azure and Microsoft Graph
 EnsureModule -ModuleName "Az.Accounts"
 EnsureModule -ModuleName "Az.Resources"
+EnsureModule -ModuleName "Microsoft.Graph.Authentication"
+EnsureModule -ModuleName "Microsoft.Graph.Applications"
+EnsureModule -ModuleName "Microsoft.Graph.Identity.DirectoryManagement"
 
-# Step 1: Login
-Show-Progress "Logging in to Azure" 1 10
+# Step 1: Login to both Azure and Microsoft Entra ID
+Show-Progress "Logging in to Azure and Microsoft Entra ID" 1 13
 Write-ColorOutput "Please authenticate via device code..." "Magenta"
+
+# Login to Azure
 $ctx = Get-AzContext -ErrorAction SilentlyContinue
 if (-not $ctx) {
     Connect-AzAccount -UseDeviceAuthentication
     $ctx = Get-AzContext
-    if (-not $ctx) { Write-Error "Authentication failed"; exit 1 }
+    if (-not $ctx) { Write-Error "Azure Authentication failed"; exit 1 }
 }
 $tenant = $ctx.Tenant.Id
 $subId  = $ctx.Subscription.Id
-Write-Success "Logged in to tenant: $tenant"
+Write-Success "Logged in to Azure tenant: $tenant"
+
+# Login to Microsoft Graph
+Write-ColorOutput "Now connecting to Microsoft Graph..." "Magenta"
+Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+
+# Connect with appropriate scopes for API permissions management
+$graphScopes = @(
+    "Application.ReadWrite.All",
+    "Directory.ReadWrite.All",
+    "AppRoleAssignment.ReadWrite.All",
+    "RoleManagement.ReadWrite.Directory"
+)
+
+try {
+    Connect-MgGraph -Scopes $graphScopes -UseDeviceAuthentication
+    Write-Success "Connected to Microsoft Graph"
+}
+catch {
+    Write-Error "Microsoft Graph authentication failed: $($_.Exception.Message)"
+    Write-Warning "Some script functionality may be limited"
+}
 
 # Common domain lookup
 $domain = (Get-AzTenant -TenantId $tenant).Domains[0]
 
 # === SP1: sp-ncce-global-provisioner ===
 # Step 2: Application
-Show-Progress "Ensure App sp-ncce-global-provisioner" 2 10
-$appName = "sp-ncce-global-provisioner"
+Show-Progress "Ensure App sp-ncce-global-provisioner" 2 13
+$appName = "sp-ncce-global-provisioner2"
 $app = Get-AzADApplication -DisplayName $appName -ErrorAction SilentlyContinue
 if ($app) {
     Write-Success "Found existing App: $appName (AppId: $($app.AppId))"
@@ -108,7 +135,7 @@ if ($app) {
 Start-Sleep 5
 
 # Step 3: Service Principal
-Show-Progress "Ensure SP for sp-ncce-global-provisioner" 3 10
+Show-Progress "Ensure SP for sp-ncce-global-provisioner" 3 13
 $sp = Get-AzADServicePrincipal -ApplicationId $app.AppId -ErrorAction SilentlyContinue
 if ($sp) {
     Write-Success "Found existing SP (ObjectId: $($sp.Id))"
@@ -120,7 +147,7 @@ if ($sp) {
 Start-Sleep 5
 
 # Step 4: Credential
-Show-Progress "Ensure credential for SP1" 4 10
+Show-Progress "Ensure credential for SP1" 4 13
 $creds = Get-AzADAppCredential -ApplicationId $app.AppId -ErrorAction SilentlyContinue
 if ($creds -and $creds.Count -gt 0) {
     Write-Success "Existing credential(s) found; skipping creation"
@@ -134,11 +161,10 @@ if ($creds -and $creds.Count -gt 0) {
     Write-Warning "SP1 Secret: $plainPassword"
 }
 
-
 # === SP2: sp-ncce-token-rotator (no roles) ===
 # Step 5: Application
-Show-Progress "Ensure App sp-ncce-token-rotator" 5 10
-$trAppName = "sp-ncce-token-rotator"
+Show-Progress "Ensure App sp-ncce-token-rotator" 5 13
+$trAppName = "sp-ncce-token-rotator2"
 $trApp = Get-AzADApplication -DisplayName $trAppName -ErrorAction SilentlyContinue
 if ($trApp) {
     Write-Success "Found existing App: $trAppName (AppId: $($trApp.AppId))"
@@ -152,7 +178,7 @@ if ($trApp) {
 Start-Sleep 5
 
 # Step 6: Service Principal
-Show-Progress "Ensure SP for sp-ncce-token-rotator" 6 10
+Show-Progress "Ensure SP for sp-ncce-token-rotator" 6 13
 $trSp = Get-AzADServicePrincipal -ApplicationId $trApp.AppId -ErrorAction SilentlyContinue
 if ($trSp) {
     Write-Success "Found existing SP (ObjectId: $($trSp.Id))"
@@ -164,7 +190,7 @@ if ($trSp) {
 Start-Sleep 5
 
 # Step 7: Credential
-Show-Progress "Ensure credential for Token Rotator" 7 10
+Show-Progress "Ensure credential for Token Rotator" 7 13
 $trCreds = Get-AzADAppCredential -ApplicationId $trApp.AppId -ErrorAction SilentlyContinue
 if ($trCreds -and $trCreds.Count -gt 0) {
     Write-Success "Existing token-rotator credential(s) found; skipping creation"
@@ -178,9 +204,151 @@ if ($trCreds -and $trCreds.Count -gt 0) {
     Write-Warning "Token-Rotator Secret: $trPassword"
 }
 
+# Output Service Principal information before Entra operations
+Write-Separator
+Write-ColorOutput "📋 Service Principal Information (Save these credentials)" "Yellow"
+Write-ColorOutput "App Name: $appName" "Cyan"
+Write-ColorOutput "Service Principal Object ID: $($sp.Id)" "Cyan"
+Write-ColorOutput "Service Principal Client ID: $($app.AppId)" "Cyan"
+if ($plainPassword) {
+    Write-ColorOutput "Service Principal Client Secret: $plainPassword" "Red"
+} else {
+    Write-ColorOutput "Service Principal Client Secret: [Using existing credential]" "Red"
+}
+Write-ColorOutput " "
+Write-ColorOutput "App Name: $trAppName" "Cyan"
+Write-ColorOutput "Token Rotator Object ID: $($trSp.Id)" "Cyan"
+Write-ColorOutput "Token Rotator Client ID: $($trApp.AppId)" "Cyan"
+if ($trPassword) {
+    Write-ColorOutput "Token Rotator Client Secret: $trPassword" "Red"
+} else {
+    Write-ColorOutput "Token Rotator Client Secret: [Using existing credential]" "Red"
+}
+Write-Separator
+
+# Step 8: Add Microsoft.Directory.ReadWrite.All permission to SP1
+Show-Progress "Adding Microsoft.Directory.ReadWrite.All permission to SP1" 8 13
+Write-ColorOutput "Adding Microsoft.Directory.ReadWrite.All API permission to $appName..." "Magenta"
+
+try {
+    # Get the Microsoft Graph resource
+    $graphServicePrincipal = Get-MgServicePrincipal -Filter "AppId eq '00000003-0000-0000-c000-000000000000'"
+    
+    if ($graphServicePrincipal) {
+        # Find the Directory.ReadWrite.All permission
+        $permissionName = "Directory.ReadWrite.All"
+        $appRole = $graphServicePrincipal.AppRoles | Where-Object { $_.Value -eq $permissionName }
+        
+        if ($appRole) {
+            # Get the application using Microsoft Graph
+            $mgApp = Get-MgApplication -Filter "AppId eq '$($app.AppId)'"
+            
+            # Check if the permission is already assigned
+            $requiredResourceAccess = $mgApp.RequiredResourceAccess | Where-Object { $_.ResourceAppId -eq $graphServicePrincipal.AppId }
+            $permissionAlreadyAdded = $false
+            
+            if ($requiredResourceAccess) {
+                $permissionAlreadyAdded = $requiredResourceAccess.ResourceAccess | 
+                    Where-Object { $_.Id -eq $appRole.Id -and $_.Type -eq "Role" }
+            }
+            
+            if ($permissionAlreadyAdded) {
+                Write-Success "Microsoft.Directory.ReadWrite.All permission already added to the application"
+            } else {
+                # Add the permission
+                if (-not $requiredResourceAccess) {
+                    # Create new required resource access for Microsoft Graph
+                    $requiredResourceAccess = @{
+                        ResourceAppId = $graphServicePrincipal.AppId
+                        ResourceAccess = @(
+                            @{
+                                Id = $appRole.Id
+                                Type = "Role"
+                            }
+                        )
+                    }
+                    
+                    # If app already has some permissions, preserve them
+                    $existingRequiredResourceAccess = $mgApp.RequiredResourceAccess
+                    if ($existingRequiredResourceAccess) {
+                        $updatedRequiredResourceAccess = $existingRequiredResourceAccess + @($requiredResourceAccess)
+                    } else {
+                        $updatedRequiredResourceAccess = @($requiredResourceAccess)
+                    }
+                } else {
+                    # Add the new permission to the existing resource access collection
+                    $updatedResourceAccess = $requiredResourceAccess.ResourceAccess + @(
+                        @{
+                            Id = $appRole.Id
+                            Type = "Role"
+                        }
+                    )
+                    
+                    # Update the required resource access for Microsoft Graph
+                    $updatedRequiredResourceAccess = $mgApp.RequiredResourceAccess | ForEach-Object {
+                        if ($_.ResourceAppId -eq $graphServicePrincipal.AppId) {
+                            @{
+                                ResourceAppId = $_.ResourceAppId
+                                ResourceAccess = $updatedResourceAccess
+                            }
+                        } else {
+                            $_
+                        }
+                    }
+                }
+                
+                # Update the application with the new permissions
+                Update-MgApplication -ApplicationId $mgApp.Id -RequiredResourceAccess $updatedRequiredResourceAccess
+                Write-Success "Microsoft.Directory.ReadWrite.All permission added to the application"
+                
+                # Grant admin consent
+                Write-ColorOutput "Attempting to grant admin consent for the permission..." "Magenta"
+                try {
+                    # Get service principal using Microsoft Graph
+                    $mgSp = Get-MgServicePrincipal -Filter "AppId eq '$($app.AppId)'"
+                    
+                    # Create app role assignment
+                    $params = @{
+                        PrincipalId = $mgSp.Id
+                        ResourceId = $graphServicePrincipal.Id
+                        AppRoleId = $appRole.Id
+                    }
+                    
+                    New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $mgSp.Id -BodyParameter $params
+                    Write-Success "Admin consent granted for Microsoft.Directory.ReadWrite.All"
+                }
+                catch {
+                    if ($_.Exception.Message -like "*already exists*") {
+                        Write-Success "Admin consent already granted"
+                    } else {
+                        Write-Warning "Could not grant admin consent automatically: $($_.Exception.Message)"
+                        Write-ColorOutput "To grant admin consent manually:" "Yellow"
+                        Write-ColorOutput "1. Go to Azure Portal -> Microsoft Entra ID -> App Registrations" "Yellow"
+                        Write-ColorOutput "2. Find '$appName' and select API permissions" "Yellow"
+                        Write-ColorOutput "3. Click 'Grant admin consent for [tenant]'" "Yellow"
+                    }
+                }
+            }
+        } else {
+            Write-Error "Could not find Directory.ReadWrite.All permission in Microsoft Graph"
+        }
+    } else {
+        Write-Error "Could not find Microsoft Graph Service Principal"
+    }
+}
+catch {
+    Write-Error "Failed to add Microsoft.Directory.ReadWrite.All permission: $($_.Exception.Message)"
+    Write-ColorOutput "To add the permission manually:" "Yellow"
+    Write-ColorOutput "1. Go to Azure Portal -> Microsoft Entra ID -> App Registrations" "Yellow"
+    Write-ColorOutput "2. Find '$appName' and select API permissions" "Yellow"
+    Write-ColorOutput "3. Add a permission -> Microsoft Graph -> Application permissions" "Yellow"
+    Write-ColorOutput "4. Select Directory.ReadWrite.All and save" "Yellow"
+    Write-ColorOutput "5. Click 'Grant admin consent for [tenant]'" "Yellow"
+}
+
 # === SP1 Role Assignments & Custom Roles ===
-# Step 8: Owner at Subscription
-Show-Progress "Ensure Owner role on subscription for SP1" 8 10
+# Step 9: Owner at Subscription
+Show-Progress "Ensure Owner role on subscription for SP1" 9 13
 $assign = Get-AzRoleAssignment -ObjectId $sp.Id `
     -Scope "/subscriptions/$subId" `
     -RoleDefinitionName "Owner" -ErrorAction SilentlyContinue
@@ -192,9 +360,9 @@ if ($assign) {
     Write-Success "Owner role assigned to SP1"
 }
 
-# Step 9: Custom Roles at ManagementGroup - Subscription Provisioner
-Show-Progress "Ensure custom role cr-subscription-provisioner" 9 12
-$roleName = "cr-subscription-provisioner"
+# Step 10: Custom Roles at ManagementGroup - Subscription Provisioner
+Show-Progress "Ensure custom role cr-subscription-provisioner" 10 13
+$roleName = "cr-subscription-provisioner2"
 $existingRole = Get-AzRoleDefinition -Name $roleName -ErrorAction SilentlyContinue
 if ($existingRole) {
     Write-Success "Custom role $roleName already exists"
@@ -258,9 +426,9 @@ if ($existingRole) {
     }
 }
 
-# Step 10: Custom Roles at ManagementGroup - Management Administrator
-Show-Progress "Ensure custom role cr-management-administrator" 10 12
-$roleNameMgmt = "cr-management-administrator"
+# Step 11: Custom Roles at ManagementGroup - Management Administrator
+Show-Progress "Ensure custom role cr-management-administrator" 11 13
+$roleNameMgmt = "cr-management-administrator2"
 $existingRoleMgmt = Get-AzRoleDefinition -Name $roleNameMgmt -ErrorAction SilentlyContinue
 if ($existingRoleMgmt) {
     Write-Success "Custom role $roleNameMgmt already exists"
@@ -332,8 +500,8 @@ if ($existingRoleMgmt) {
     }
 }
 
-# Step 11: Assign custom role to SP at Tenant Root Group level
-Show-Progress "Assign custom role to SP at Tenant Root Group" 11 12
+# Step 12: Assign custom role to SP at Tenant Root Group level
+Show-Progress "Assign custom role to SP at Tenant Root Group" 12 13
 $mgScope = "/providers/Microsoft.Management/managementGroups/$tenant"
 $customRoleAssign = Get-AzRoleAssignment -ObjectId $sp.Id `
     -Scope $mgScope `
@@ -355,155 +523,131 @@ if ($customRoleAssign) {
     }
 }
 
-# Step 12: Assign Application Administrator role to SP using Microsoft Graph
-Show-Progress "Assign Application Administrator role to SP" 12 12
+# Step 13: Assign Application Administrator role to SP using Microsoft Graph
+Show-Progress "Assign Application Administrator role to SP" 13 13
 Write-ColorOutput "Assigning Application Administrator role to $appName via Microsoft Graph..." "Magenta"
 
-# First, ensure the Microsoft Graph PowerShell modules are installed
-$requiredModules = @("Microsoft.Graph.Authentication", "Microsoft.Graph.Identity.DirectoryManagement")
-$graphModulesInstalled = $true
-foreach ($module in $requiredModules) {
-    if (!(EnsureModule -ModuleName $module)) {
-        $graphModulesInstalled = $false
-        break
-    }
-}
-
-if (-not $graphModulesInstalled) {
-    Write-Error "Could not install required Microsoft Graph PowerShell modules"
-    Write-ColorOutput "To assign the role manually:" "Yellow"
-    Write-ColorOutput "1. Navigate to Azure Portal -> Microsoft Entra ID -> Roles and administrators" "Yellow"
-    Write-ColorOutput "2. Find and select 'Application Administrator'" "Yellow"
-    Write-ColorOutput "3. Click 'Add assignments' and search for '$appName'" "Yellow"
-} else {
+try {
+    # Check if we're already connected to Microsoft Graph
     try {
-        # Import the modules
-        Import-Module Microsoft.Graph.Authentication
-        Import-Module Microsoft.Graph.Identity.DirectoryManagement
-
-        # Connect to Microsoft Graph with appropriate scopes
-        Write-ColorOutput "Connecting to Microsoft Graph with administrative permissions..." "Magenta"
+        Get-MgContext -ErrorAction Stop | Out-Null
+    }
+    catch {
+        # Reconnect if needed
+        Write-ColorOutput "Reconnecting to Microsoft Graph..." "Magenta"
+        Connect-MgGraph -Scopes $graphScopes -UseDeviceAuthentication
+    }
+    
+    # Step 1: Get all directory roles and find Application Administrator by name
+    Write-ColorOutput "Finding Application Administrator role..." "Magenta"
+    $allRoles = Get-MgDirectoryRole
+    $appAdminRole = $allRoles | Where-Object { $_.DisplayName -eq "Application Administrator" }
+    
+    # If role not found, try to activate it
+    if (-not $appAdminRole) {
+        Write-ColorOutput "Application Administrator role not found, trying to activate it..." "Yellow"
         
-        # Disconnect any existing connections to avoid conflicts
-        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+        # Get the role template
+        $roleTemplates = Get-MgDirectoryRoleTemplate
+        $appAdminTemplate = $roleTemplates | Where-Object { $_.DisplayName -eq "Application Administrator" }
         
-        # Connect with appropriate scopes for Directory Role Management
-        $scopes = @(
-            "RoleManagement.ReadWrite.Directory",
-            "Directory.Read.All", 
-            "Directory.ReadWrite.All", 
-            "RoleManagement.Read.Directory"
-        )
-        
-        Connect-MgGraph -Scopes $scopes
-        
-        # Step 1: Get all directory roles and find Application Administrator by name
-        Write-ColorOutput "Finding Application Administrator role..." "Magenta"
-        $allRoles = Get-MgDirectoryRole
-        $appAdminRole = $allRoles | Where-Object { $_.DisplayName -eq "Application Administrator" }
-        
-        # If role not found, try to activate it
-        if (-not $appAdminRole) {
-            Write-ColorOutput "Application Administrator role not found, trying to activate it..." "Yellow"
-            
-            # Get the role template
-            $roleTemplates = Get-MgDirectoryRoleTemplate
-            $appAdminTemplate = $roleTemplates | Where-Object { $_.DisplayName -eq "Application Administrator" }
-            
-            if ($appAdminTemplate) {
-                try {
-                    # Try to activate the role
-                    $params = @{
-                        "roleTemplateId" = $appAdminTemplate.Id
-                    }
-                    
-                    Write-ColorOutput "Activating Application Administrator role..." "Magenta"
-                    $newRole = New-MgDirectoryRole -BodyParameter $params -ErrorAction Stop
-                    Write-Success "Application Administrator role activated"
-                    $appAdminRole = $newRole
+        if ($appAdminTemplate) {
+            try {
+                # Try to activate the role
+                $params = @{
+                    "roleTemplateId" = $appAdminTemplate.Id
                 }
-                catch {
-                    # If we get a conflict, the role is already active but not being returned properly
-                    # Re-query all roles
-                    if ($_.Exception.Message -like "*A conflicting object*") {
-                        Write-ColorOutput "Role already exists. Re-checking roles..." "Yellow"
-                        Start-Sleep -Seconds 2  # Brief pause to allow for any replication
-                        $allRoles = Get-MgDirectoryRole
-                        $appAdminRole = $allRoles | Where-Object { $_.DisplayName -eq "Application Administrator" }
-                    }
-                    else {
-                        throw $_
-                    }
+                
+                Write-ColorOutput "Activating Application Administrator role..." "Magenta"
+                $newRole = New-MgDirectoryRole -BodyParameter $params -ErrorAction Stop
+                Write-Success "Application Administrator role activated"
+                $appAdminRole = $newRole
+            }
+            catch {
+                # If we get a conflict, the role is already active but not being returned properly
+                # Re-query all roles
+                if ($_.Exception.Message -like "*A conflicting object*") {
+                    Write-ColorOutput "Role already exists. Re-checking roles..." "Yellow"
+                    Start-Sleep -Seconds 2  # Brief pause to allow for any replication
+                    $allRoles = Get-MgDirectoryRole
+                    $appAdminRole = $allRoles | Where-Object { $_.DisplayName -eq "Application Administrator" }
                 }
-            }
-            else {
-                throw "Could not find Application Administrator role template"
-            }
-        }
-        
-        # Check if we now have a valid role
-        if ($appAdminRole -and $appAdminRole.Id) {
-            Write-Success "Found Application Administrator role with ID: $($appAdminRole.Id)"
-            
-            # Check if SP is already a member
-            Write-ColorOutput "Checking existing role members..." "Magenta"
-            $members = Get-MgDirectoryRoleMember -DirectoryRoleId $appAdminRole.Id
-            $spIsMember = $members | Where-Object { $_.Id -eq $sp.Id }
-            
-            if ($spIsMember) {
-                Write-Success "Service Principal is already a member of the Application Administrator role"
-            }
-            else {
-                # Add the service principal to the role
-                Write-ColorOutput "Adding service principal to Application Administrator role..." "Magenta"
-                try {
-                    $params = @{
-                        "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)"
-                    }
-                    
-                    New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params
-                    Write-Success "Service Principal assigned to Application Administrator role"
-                }
-                catch {
-                    # If the error is that the member already exists, consider it a success
-                    if ($_.Exception.Message -like "*One or more added object references already exist*") {
-                        Write-Success "Service Principal is already a member of the Application Administrator role"
-                    }
-                    else {
-                        # For other errors, rethrow
-                        throw $_
-                    }
+                else {
+                    throw $_
                 }
             }
         }
         else {
-            throw "Could not find or activate Application Administrator role"
+            throw "Could not find Application Administrator role template"
         }
-        
-        # Disconnect from Microsoft Graph
-        Disconnect-MgGraph | Out-Null
-        Write-Success "Disconnected from Microsoft Graph"
     }
-    catch {
-        Write-Error "Failed to assign Application Administrator role: $($_.Exception.Message)"
-        Write-ColorOutput "For manual assignment:" "Yellow"
-        Write-ColorOutput "1. Navigate to Azure Portal -> Microsoft Entra ID -> Roles and administrators" "Yellow"
-        Write-ColorOutput "2. Find and select 'Application Administrator'" "Yellow"
-        Write-ColorOutput "3. Click 'Add assignments' and search for '$appName'" "Yellow"
+    
+    # Check if we now have a valid role
+    if ($appAdminRole -and $appAdminRole.Id) {
+        Write-Success "Found Application Administrator role with ID: $($appAdminRole.Id)"
+        
+        # Check if SP is already a member
+        Write-ColorOutput "Checking existing role members..." "Magenta"
+        $members = Get-MgDirectoryRoleMember -DirectoryRoleId $appAdminRole.Id
+        $spIsMember = $members | Where-Object { $_.Id -eq $sp.Id }
+        
+        if ($spIsMember) {
+            Write-Success "Service Principal is already a member of the Application Administrator role"
+        }
+        else {
+            # Add the service principal to the role
+            Write-ColorOutput "Adding service principal to Application Administrator role..." "Magenta"
+            try {
+                $params = @{
+                    "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)"
+                }
+                
+                New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params
+                Write-Success "Service Principal assigned to Application Administrator role"
+            }
+            catch {
+                # If the error is that the member already exists, consider it a success
+                if ($_.Exception.Message -like "*One or more added object references already exist*") {
+                    Write-Success "Service Principal is already a member of the Application Administrator role"
+                }
+                else {
+                    # For other errors, rethrow
+                    throw $_
+                }
+            }
+        }
+    }
+    else {
+        throw "Could not find or activate Application Administrator role"
     }
 }
+catch {
+    Write-Error "Failed to assign Application Administrator role: $($_.Exception.Message)"
+    Write-ColorOutput "For manual assignment:" "Yellow"
+    Write-ColorOutput "1. Navigate to Azure Portal -> Microsoft Entra ID -> Roles and administrators" "Yellow"
+    Write-ColorOutput "2. Find and select 'Application Administrator'" "Yellow"
+    Write-ColorOutput "3. Click 'Add assignments' and search for '$appName'" "Yellow"
+}
+
+# Disconnect from Microsoft Graph
+Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+Write-Success "Disconnected from Microsoft Graph"
 
 Write-Separator
 Write-ColorOutput "✅ Service Principal setup complete!" "Green"
 Write-ColorOutput "App Name: $appName" "Cyan"
 Write-ColorOutput "Service Principal Object ID: $($sp.Id)" "Cyan"
 Write-ColorOutput "Service Principal Client ID: $($app.AppId)" "Cyan"
-Write-ColorOutput "Service Principal Client Secret: $plainPassword" "Red"
+if ($plainPassword) {
+    Write-ColorOutput "Service Principal Client Secret: $plainPassword" "Red"
+}
 Write-ColorOutput " "
 Write-ColorOutput "App Name: $trAppName" "Cyan"
 Write-ColorOutput "Token Rotator Object ID: $($trSp.Id)" "Cyan"
 Write-ColorOutput "Token Rotator Client ID: $($trApp.AppId)" "Cyan"
-Write-ColorOutput "Token Rotator Client Secret: $trPassword" "Red"
+if ($trPassword) {
+    Write-ColorOutput "Token Rotator Client Secret: $trPassword" "Red"
+}
 Write-ColorOutput " "
 Write-ColorOutput "📋 Important: Copy and save the passwords displayed above in a secure location." "Yellow"
 Write-ColorOutput "The passwords will not be shown again!" "Red"
