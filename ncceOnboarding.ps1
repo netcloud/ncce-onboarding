@@ -50,22 +50,45 @@ function Write-Warning   { param($m) Write-ColorOutput "⚠️ $m" "Yellow" }
 function Write-Error     { param($m) Write-ColorOutput "! $m" "Red" }
 function Write-Separator { Write-ColorOutput "─────────────────────────────────────────────────────────────────" "Gray" }
 
-function EnsureModule {
-    param([string]$ModuleName)
+# ---------------------------------------------------------------------------
+# Version-pinning helper
+# ---------------------------------------------------------------------------
+$RequiredModules = @{
+    'Az.Accounts'                          = '3.0.3'
+    'Az.Resources'                         = '2.5.0'
+    'Microsoft.Graph.Authentication'       = '2.24.0'
+    'Microsoft.Graph.Applications'         = '2.24.0'
+    'Microsoft.Graph.Identity.DirectoryManagement' = '2.24.0'
+}
+
+function Ensure-Module {
+    param(
+        [Parameter(Mandatory)][string]$ModuleName,
+        [Parameter(Mandatory)][string]$ModuleVersion
+    )
+
     try {
-        if (-not (Get-Module -Name $ModuleName -ListAvailable)) {
-            Write-ColorOutput "$ModuleName module not found. Installing..." "Magenta"
-            Install-Module -Name $ModuleName -Force -Scope CurrentUser -AllowClobber
-            Write-Success "$ModuleName installed"
+        $loaded = Get-Module -Name $ModuleName -ListAvailable |
+                  Where-Object { $_.Version -eq [version]$ModuleVersion }
+
+        if (-not $loaded) {
+            Write-ColorOutput "$ModuleName $ModuleVersion not found. Installing..." "Magenta"
+            Install-Module -Name $ModuleName `
+                           -RequiredVersion $ModuleVersion `
+                           -Scope CurrentUser `
+                           -AllowClobber `
+                           -Force
+            Write-Success "$ModuleName $ModuleVersion installed"
         } else {
-            Write-Success "$ModuleName already present"
+            Write-Success "$ModuleName $ModuleVersion already present"
         }
         return $true
     } catch {
-        Write-Error "Failed to install ${ModuleName}: $($_.Exception.Message)"
+        Write-Error "Failed to install ${ModuleName} ${ModuleVersion}: $($_.Exception.Message)"
         return $false
     }
 }
+
 
 # === Main ===
 Show-Banner
@@ -73,11 +96,9 @@ Write-ColorOutput "Starting Azure Service Principal setup..." "Green"
 Write-Separator
 
 # Ensure required modules for Azure and Microsoft Graph
-EnsureModule -ModuleName "Az.Accounts"
-EnsureModule -ModuleName "Az.Resources"
-EnsureModule -ModuleName "Microsoft.Graph.Authentication"
-EnsureModule -ModuleName "Microsoft.Graph.Applications"
-EnsureModule -ModuleName "Microsoft.Graph.Identity.DirectoryManagement"
+foreach ($kvp in $RequiredModules.GetEnumerator()) {
+    Ensure-Module -ModuleName $kvp.Key -ModuleVersion $kvp.Value | Out-Null
+}
 
 # Step 1: Login to both Azure and Microsoft Entra ID
 Show-Progress "Logging in to Azure and Microsoft Entra ID" 1 13
