@@ -6,7 +6,7 @@
     an oder verwendet bereits vorhandene Ressourcen.
 .NOTES
     Version:        1.8
-    Author:         Timo Haldi
+    Author:         Timo Haldi, Ardin Ibraimi
     Creation Date:  May 7, 2025
     Last Updated:   May 20, 2025
 #>
@@ -53,52 +53,61 @@ function Write-Separator { Write-ColorOutput "───────────�
 # ---------------------------------------------------------------------------
 # Version-pinning helper
 # ---------------------------------------------------------------------------
-$RequiredModules = @{
-    'Az.Accounts'                          = '3.0.3'
-    'Az.Resources'                         = '2.5.0'
-    'Microsoft.Graph.Authentication'       = '2.24.0'
-    'Microsoft.Graph.Applications'         = '2.24.0'
-    'Microsoft.Graph.Identity.DirectoryManagement' = '2.24.0'
-}
+# --------------------------- module inventory ---------------------------
+$RequiredModules = @(
+    @{ Name = 'Az.Accounts';                                  Version = '5.0.1' },
+    @{ Name = 'Az.Resources';                                 Version = '8.0.0' },
+    @{ Name = 'Microsoft.Graph.Authentication';               Version = '2.24.0' },
+    @{ Name = 'Microsoft.Graph.Applications';                 Version = '2.24.0' },
+    @{ Name = 'Microsoft.Graph.Identity.DirectoryManagement'; Version = '2.24.0' }
+)
+# --- wipe the old cache once -------------------------------------------
+Remove-Item -Recurse -Force (Join-Path $PSScriptRoot '.pwsh_venv')
+# --------------------------- virtual-env helpers ------------------------
+# venv root
+$VenvRoot = Join-Path $PSScriptRoot '.pwsh_venv'
 
-function Ensure-Module {
-    param(
-        [Parameter(Mandatory)][string]$ModuleName,
-        [Parameter(Mandatory)][string]$ModuleVersion
-    )
+function New-ModuleVenv {
+    if (-not (Test-Path $VenvRoot)) {
+        New-Item -ItemType Directory -Path $VenvRoot | Out-Null
+    }
 
-    try {
-        $loaded = Get-Module -Name $ModuleName -ListAvailable |
-                  Where-Object { $_.Version -eq [version]$ModuleVersion }
+    foreach ($mod in $RequiredModules) {
+        $verFolder = Join-Path $VenvRoot "$($mod.Name)\$($mod.Version)"
+        if (-not (Test-Path $verFolder)) {
+            Write-ColorOutput "Downloading $($mod.Name) $($mod.Version) …" 'Magenta'
 
-        if (-not $loaded) {
-            Write-ColorOutput "$ModuleName $ModuleVersion not found. Installing..." "Magenta"
-            Install-Module -Name $ModuleName `
-                           -RequiredVersion $ModuleVersion `
-                           -Scope CurrentUser `
-                           -AllowClobber `
-                           -Force
-            Write-Success "$ModuleName $ModuleVersion installed"
-        } else {
-            Write-Success "$ModuleName $ModuleVersion already present"
+            # PowerShellGet cmd that exists everywhere
+            Save-Module -Name $mod.Name `
+                        -RequiredVersion $mod.Version `
+                        -Path $VenvRoot `
+                        -Force -ErrorAction Stop
+
+            Write-Success "$($mod.Name) saved"
         }
-        return $true
-    } catch {
-        Write-Error "Failed to install ${ModuleName} ${ModuleVersion}: $($_.Exception.Message)"
-        return $false
     }
 }
 
+function Activate-ModuleVenv {
+    $env:PSModulePath = "$VenvRoot;$env:PSModulePath"
+
+    foreach ($mod in $RequiredModules) {
+        $psd1 = Join-Path $VenvRoot "$($mod.Name)\$($mod.Version)\$($mod.Name).psd1"
+        Import-Module $psd1 -Force -ErrorAction Stop
+    }
+    Write-Success 'All modules loaded from venv'
+}
 
 # === Main ===
 Show-Banner
 Write-ColorOutput "Starting Azure Service Principal setup..." "Green"
 Write-Separator
 
-# Ensure required modules for Azure and Microsoft Graph
-foreach ($kvp in $RequiredModules.GetEnumerator()) {
-    Ensure-Module -ModuleName $kvp.Key -ModuleVersion $kvp.Value | Out-Null
-}
+# venv build + activation
+
+New-ModuleVenv
+Activate-ModuleVenv
+Write-Success 'Local module environment ready'
 
 # Step 1: Login to both Azure and Microsoft Entra ID
 Show-Progress "Logging in to Azure and Microsoft Entra ID" 1 13
@@ -128,7 +137,7 @@ $graphScopes = @(
 )
 
 try {
-    Connect-MgGraph -Scopes $graphScopes -UseDeviceAuthentication
+    Connect-MgGraph -Scopes $graphScopes -UseDeviceAuthentication -NoWelcome
     Write-Success "Connected to Microsoft Graph"
 }
 catch {
