@@ -56,14 +56,19 @@ function Write-Separator { Write-ColorOutput "───────────�
 
 # --------------------------- module inventory ---------------------------
 $RequiredModules = @(
-    @{ Name = 'Az.Accounts';                                  Version = '5.0.1' },
-    @{ Name = 'Az.Resources';                                 Version = '8.0.0' },
-    @{ Name = 'Microsoft.Graph.Authentication';               Version = '2.24.0' },
-    @{ Name = 'Microsoft.Graph.Applications';                 Version = '2.24.0' },
-    @{ Name = 'Microsoft.Graph.Identity.DirectoryManagement'; Version = '2.24.0' }
+  @{ Name = 'Az.Accounts'; Version = '5.0.1' },
+  @{ Name = 'Az.Resources'; Version = '8.0.0' },
+  @{ Name = 'Microsoft.Graph'; Version = '2.24.0' }
 )
 # --- wipe the old cache once -------------------------------------------
-Remove-Item -Recurse -Force (Join-Path $PSScriptRoot '.pwsh_venv')
+$cachePath = Join-Path $PSScriptRoot '.pwsh_venv'
+if (Test-Path $cachePath) {
+    $oldProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    Remove-Item -Recurse -Force $cachePath
+    $ProgressPreference = $oldProgress
+    Write-ColorOutput "Removed existing module venv cache" "Gray"
+}
 # --------------------------- virtual-env helpers ------------------------
 # venv root
 $VenvRoot = Join-Path $PSScriptRoot '.pwsh_venv'
@@ -72,49 +77,62 @@ function New-ModuleVenv {
     if (-not (Test-Path $VenvRoot)) {
         New-Item -ItemType Directory -Path $VenvRoot | Out-Null
     }
-
     foreach ($mod in $RequiredModules) {
-        $verFolder = Join-Path $VenvRoot "$($mod.Name)\$($mod.Version)"
-        if (-not (Test-Path $verFolder)) {
-            Write-ColorOutput "Downloading $($mod.Name) $($mod.Version) …" 'Magenta'
-
-            # PowerShellGet cmd that exists everywhere
-            Save-Module -Name $mod.Name `
-                        -RequiredVersion $mod.Version `
-                        -Path $VenvRoot `
-                        -Force -ErrorAction Stop
-
-            Write-Success "$($mod.Name) saved"
-        }
+        Save-Module -Name $mod.Name -RequiredVersion $mod.Version -Path $VenvRoot -Force -ErrorAction Stop
     }
 }
 
-function Activate-ModuleVenv {
-    $env:PSModulePath = "$VenvRoot;$env:PSModulePath"
+function Import-GraphModules {  # corrected function declaration
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Version
+    )
+    # load the PSD1 to discover dependencies
+    $psd1 = Join-Path $VenvRoot "$Name\$Version\$Name.psd1"
+    $manifest = Import-PowerShellDataFile -Path $psd1
 
-    foreach ($mod in $RequiredModules) {
-        $psd1 = Join-Path $VenvRoot "$($mod.Name)\$($mod.Version)\$($mod.Name).psd1"
-        Import-Module $psd1 -Force -ErrorAction Stop
+    foreach ($req in $manifest.RequiredModules) {
+        Import-Module -Name $req.ModuleName -RequiredVersion $req.RequiredVersion -Force
     }
+    Import-Module -Name $Name -RequiredVersion $Version -Force
+}
+
+function Enable-ModuleVenv {
+    # ensure module path works cross-platform
+    $sep = [IO.Path]::PathSeparator
+    $env:PSModulePath = "$VenvRoot$sep$env:PSModulePath"
+
+    # import Az modules
+    Import-Module -Name Az.Accounts  -RequiredVersion '5.0.1' -Force
+    Import-Module -Name Az.Resources -RequiredVersion '8.0.0' -Force
+
+    # import unified Microsoft.Graph module (loads sub-modules automatically)
+    Import-Module -Name Microsoft.Graph -RequiredVersion '2.24.0' -UseWindowsPowerShell -Force
+
     Write-Success 'All modules loaded from venv'
 }
 
-# === Main ===
+# === Module Preparation ===
 Show-Banner
-Write-ColorOutput "Starting Azure Service Principal setup..." "Green"
+Write-ColorOutput "Preparing PowerShell needed Module Environment..." "Green"
 Write-Separator
 
 # venv build + activation
 
 New-ModuleVenv
-Activate-ModuleVenv
+Enable-ModuleVenv
+
+
 Write-Success 'Local module environment ready'
 
+# === Azure Service Principal Setup ===
+Write-ColorOutput "Starting Azure Service Principal setup..." "Green"
+Write-Separator
 # Step 1: Login to both Azure and Microsoft Entra ID
 Show-Progress "Logging in to Azure and Microsoft Entra ID" 1 13
 Write-ColorOutput "Please authenticate via device code..." "Magenta"
 
-# Login to Azure
+#  Check if already authenticated
 $ctx = Get-AzContext -ErrorAction SilentlyContinue
 if (-not $ctx) {
     Connect-AzAccount -UseDeviceAuthentication
@@ -125,11 +143,28 @@ $tenant = $ctx.Tenant.Id
 $subId  = $ctx.Subscription.Id
 Write-Success "Logged in to Azure tenant: $tenant"
 
-# Login to Microsoft Graph
+# Check if Microsoft Graph is already connected
+$mgContext = Get-MgContext -ErrorAction SilentlyContinue
+if ($mgContext) {
+    Write-Success "Already connected to Microsoft Graph"
+} else {
+    Write-ColorOutput "Connecting to Microsoft Graph..." "Magenta"
+}
 Write-ColorOutput "Now connecting to Microsoft Graph..." "Magenta"
 Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
 
-# Connect with appropriate scopes for API permissions management
+# Define required Microsoft Graph permissions
+# These permissions are required for the script to function correctly
+# Ensure you have the necessary permissions granted in your Azure AD tenant
+# Note: The script will prompt for admin consent if not already granted
+# The permissions below are necessary for the script to manage applications, service principals, and role assignments
+# The script will also attempt to grant admin consent automatically
+# If the consent cannot be granted automatically, it will provide instructions for manual consent
+# Required Microsoft Graph permissions
+# Application.ReadWrite.All: Allows the app to read and write all applications in the directory
+# Directory.ReadWrite.All: Allows the app to read and write directory data
+# AppRoleAssignment.ReadWrite.All: Allows the app to read and write app role assignments
+# RoleManagement.ReadWrite.Directory: Allows the app to read and write role management in the directory
 $graphScopes = @(
     "Application.ReadWrite.All",
     "Directory.ReadWrite.All",
@@ -146,7 +181,7 @@ catch {
     Write-Warning "Some script functionality may be limited"
 }
 
-# Common domain lookup
+# Get the tenant domain
 $domain = (Get-AzTenant -TenantId $tenant).Domains[0]
 
 # === SP1: sp-ncce-global-provisioner ===
