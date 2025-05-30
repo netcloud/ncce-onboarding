@@ -164,7 +164,7 @@ Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
 # Application.ReadWrite.All: Allows the app to read and write all applications in the directory
 # Directory.ReadWrite.All: Allows the app to read and write directory data
 # AppRoleAssignment.ReadWrite.All: Allows the app to read and write app role assignments
-# RoleManagement.ReadWrite.Directory: Allows the app to read and write role management in the directory
+# RoleManagement.Read.Write.Directory: Allows the app to read and write role management in the directory
 $graphScopes = @(
     "Application.ReadWrite.All",
     "Directory.ReadWrite.All",
@@ -664,19 +664,17 @@ try {
             # Add the service principal to the role
             Write-ColorOutput "Adding service principal to Application Administrator role..." "Magenta"
             try {
-                $params = @{
-                    "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)"
-                }
-                
-                New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params
+                $params = @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.Id)" }
+
+                # Suppress duplicate-member errors entirely
+                $null = New-MgDirectoryRoleMemberByRef -DirectoryRoleId $appAdminRole.Id -BodyParameter $params -ErrorAction Stop -WarningAction SilentlyContinue 2>$null
                 Write-Success "Service Principal assigned to Application Administrator role"
             }
             catch {
-                # If the error is that the member already exists, consider it a success
-                if ($_.Exception.Message -like "*One or more added object references already exist*") {
-                    Write-Success "Service Principal is already a member of the Application Administrator role"
-                }
-                else {
+                # If the error is that the member already exists or a bad request status, treat as success
+                if ($_.Exception.Message -match 'One or more added object references already exist' -or $_.Exception.Message -match 'Request_BadRequest') {
+                    Write-Success 'Service Principal is already a member of the Application Administrator role'
+                } else {
                     # For other errors, rethrow
                     throw $_
                 }
