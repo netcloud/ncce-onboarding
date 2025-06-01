@@ -1,101 +1,131 @@
-# NCCE Prerequisites Setup Script
+# NCCE Prerequisites Setup
 
-![Maintained by Badge](https://img.shields.io/badge/maintained_by-Netcloud-454B95)
-
+![Maintained by Badge](https://img.shields.io/badge/maintained_by-Netcloud-454B95)  
 ![Netcloud logo](https://www.netcloud.ch/wp-content/uploads/2019/11/Netcloud-Logo.png)
 
 ## Overview
 
-This script automates the setup of Azure service principals with custom roles required for the NCCE (NetCloud Cloud Environment) management. It creates an Azure AD application, service principal, and assigns custom roles at the tenant root management group level for managing Azure resources.
+The `Initialize-NCCE.ps1` script automates creation and configuration of Azure AD apps, service principals, and custom roles required for NCCE (NetCloud Cloud Environment) management. It now uses reusable modules under the `Modules/` folder for:
+
+- Module version pinning and caching (`ModuleVenvHelper`)
+- Device-code authentication for Azure & Microsoft Graph (`AuthHelper`)
+- Service principal creation/credential management (`AzureSpHelper`)
+- RBAC role assignments and custom roles (`AzureRbacHelper`)
+- Granting Graph permissions (`GraphPermissionHelper`)
+- Assigning Graph directory roles (`GraphDirectoryRoleHelper`)
+
+By splitting logic into modules, maintenance is easier and console output is consistent.
 
 ## Features
 
-- Creates Azure AD application with custom name (interactive input)
-- Creates service principal for the application
-- Creates client secret for authentication
-- Assigns Owner role at subscription level
-- Creates and assigns two custom roles at tenant root management group level:
-  - `cr-subscription-provisioner` - Used for subscription management and resource provisioning
-  - `cr-management-administrator` - Used for managing Management Groups, Policies, and resource groups
+- **Environment Setup**  
+  - Pinned‐version caching of required PowerShell modules (Az.* and Microsoft.Graph.*)  
+  - Cross-platform PSModulePath adjustment  
+
+- **Authentication**  
+  - Azure device-code login (tenant and subscription selection)  
+  - Microsoft Graph device-code login (with required scopes)  
+  - Summary of tenant ID, tenant name, and Graph user  
+
+- **Service Principal (SP1) – `sp-ncce-global-provisioner`**  
+  - Create or retrieve Azure AD application  
+  - Create or retrieve service principal  
+  - Create or reuse client secret  
+  - Grant `Directory.ReadWrite.All` via Microsoft Graph  
+  - Assign Owner role on chosen subscription  
+  - Create and assign custom roles at tenant-root management group:  
+    - `cr-subscription-provisioner`  
+    - `cr-management-administrator`  
+  - Assign “Application Administrator” directory role  
+
+- **Service Principal (SP2) – `sp-ncce-token-rotator`**  
+  - Create or retrieve Azure AD application  
+  - Create or retrieve service principal  
+  - Create or reuse client secret  
+
+- **Final Step Summary**  
+  - Lists each step with key info (app names, IDs, secrets, role assignments)  
 
 ## Prerequisites
 
-- PowerShell 5.1 or higher
-- Az PowerShell modules (`Az.Accounts`, `Az.Resources`)
-- Azure CLI installed (for credential creation)
-- Global Administrator rights in Azure AD tenant
-- Owner rights at the subscription level
-- Sufficient permissions at tenant root management group
+- PowerShell 7.0 or higher (for cross-platform and `-DeviceCode`)  
+- Az PowerShell modules (pinned versions will be cached)  
+- Global Administrator or Application Administrator rights in Azure AD  
+- Owner role on the subscription you target  
+- Owner (or equivalent) at tenant-root management group  
 
-## Required Permissions for Running the NCCE Prerequisites Script
-To execute the setup script end-to-end, your identity (user or service principal) must have permissions in both Azure AD (Microsoft Graph) and Azure Resource Manager (ARM):
+## Required Permissions
 
+1. **Azure AD (Microsoft Graph)**  
+   - **Application Administrator** (or Cloud Application Administrator)  
+     - Create, update, delete app registrations & service principals  
+     - Manage application credentials  
+   - **Optional**: Privileged Role Administrator or Global Administrator for consenting to API permissions  
 
-1. Azure AD (Microsoft Graph) Permissions
-- Application Administrator (or Cloud Application Administrator)
-   - Create, update and delete App registrations and their service principals
-   - Manage application credentials
-- (Optional) Privileged Role Administrator (or Global Administrator)
-   - Consent to application API permissions under “API Permissions”
-
-2. Azure Resource Manager (ARM) Permissions
-- Owner at the subscription level
-   - Create role assignments for the new service principal
-- Owner (or equivalent) at the root management-group level
-   - Create custom roles via New-AzRoleDefinition
-   - Assign custom roles to service principals
+2. **Azure Resource Manager (ARM)**  
+   - **Owner** on subscription  
+     - Create role assignments  
+   - **Owner** (or equivalent) at tenant-root management group  
+     - Create custom roles via `New-AzRoleDefinition`  
+     - Assign custom roles to service principals  
 
 ## Installation
 
-1. Clone this repository:
-   ```
+1. Clone the repository:
+   ```bash
    git clone git@github.com:netcloud/ncce-onboarding.git
    cd ncce-onboarding
-   ```
+   
+Verify the Modules/ folder and Initialize-NCCE.ps1 exist:
+├── Initialize-NCCE.ps1
+└── Modules/
+    ├── AuthHelper.psm1
+    ├── ModuleVenvHelper.psm1
+    ├── AzureSpHelper.psm1
+    ├── AzureRbacHelper.psm1
+    ├── GraphPermissionHelper.psm1
+    └── GraphDirectoryRoleHelper.psm1
+Run the setup script:
+pwsh ./Initialize-NCCE.ps1
+Usage
 
-2. Run the script:
-   ```
-   pwsh ncceOnboarding.ps1
-   ```
+Open a PowerShell 7 session in the repository root.
+Execute ./Initialize-NCCE.ps1.
+Authenticate when prompted:
+Azure device-code login → enter code at https://microsoft.com/devicelogin
+Microsoft Graph device-code login → enter code at https://microsoft.com/devicelogin
+Wait for each step to complete; key details will be printed as they run.
+At the end, a “📑 Step Summary” displays all steps and their info.
+Note: Copy any client secret shown to a secure location. It will not be repeated.
+Output
 
-## Usage
+Running the script will produce:
 
-1. Run the script in PowerShell
-2. Authenticate with your Azure account when prompted
-3. The script will create all necessary resources and display the results
-4. Save the client secret displayed at the end - it will not be shown again!
+Azure AD application registrations:
+sp-ncce-global-provisioner
+sp-ncce-token-rotator
+Associated service principals
+Client secrets (new or existing)
+Custom roles created and assigned:
+cr-subscription-provisioner
+cr-management-administrator
+“Application Administrator” directory role assignment for SP1
+A final summary table shows each step name and its “AppName, AppId, ObjectId, Secret, Role assigned,” etc.
 
-## Output
+Troubleshooting
 
-The script will create:
+Credential creation fails → manually create a client secret in Azure portal under App Registration → Certificates & secrets.
+RBAC assignment error → check that you have Owner rights at subscription or tenant-root management group.
+Graph login suppressed → run in PowerShell 7, ensure Connect-MgGraph -DeviceCode output is not piped to a variable.
+Module import warnings → ensure each module uses approved verbs or use -DisableNameChecking.
+Security Considerations
 
-- Azure AD application registration
-- Service principal
-- Client secret
-- Custom roles and assignments
-
-## Troubleshooting
-
-- If credential creation fails, you may need to manually create a client secret in the Azure portal
-- If role assignments fail at tenant level, check your Management Group permissions
-- If errors persist, ensure you have the latest Az PowerShell modules installed
-
-## Additional Notes
-
-- The created service principal will have elevated rights at the subscription level
-- Custom roles are created at tenant root management group level
-
-## Security Considerations
-
-- The script saves a file containing the service principal secret - keep this secure!
-- Delete the secret file once you've stored the credentials in a secure location
-- Consider using Azure Key Vault to store the secret securely
-- Rotate the client secret periodically
-
-## License
+Store client secrets securely (e.g. Azure Key Vault).
+Remove any local copy of secrets after storing.
+Rotate client secrets periodically.
+Review custom roles and scope assignments for least privilege.
+License
 
 Copyright © 2025 Netcloud AG
 
----
-
-For more information, contact [Netcloud](https://www.netcloud.ch/)
+For more info, contact Netcloud.
