@@ -161,7 +161,7 @@ function TaskSP1GraphPermission {
     Write-Host "`t🔐 [Task] SP1 – Grant Directory.ReadWrite.All via Graph..." -ForegroundColor Yellow
 
     Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
-    Get-InstalledModule 
+    
     Start-Sleep -Seconds 5 # Ensure module is loaded before proceeding
     $mgApp1 = Get-MgApplication -Filter "appId eq '$($global:app1.AppId)'"
     if (-not $mgApp1) {

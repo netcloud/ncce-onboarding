@@ -7,8 +7,8 @@ $ErrorActionPreference = 'Stop'
 
 # --------------------------- Module Inventory ---------------------------
 $RequiredAzModules = @(
-    @{ Name = 'Az.Accounts';   Version = '5.0.1' },
-    @{ Name = 'Az.Resources'; Version = '8.0.0' }
+    @{ Name = 'Az.Resources'; Version = '8.0.0' },
+    @{ Name = 'Az.Accounts';   Version = '5.0.2' }
 )
 
 $RequiredGraphModules = @(
