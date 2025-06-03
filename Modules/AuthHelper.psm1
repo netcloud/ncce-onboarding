@@ -37,7 +37,8 @@ function Initialize-AuthContexts {
         $scopes = @(
             'Application.ReadWrite.All',
             'Directory.ReadWrite.All',
-            'AppRoleAssignment.ReadWrite.All'
+            'AppRoleAssignment.ReadWrite.All',
+            'RoleManagement.ReadWrite.Directory'
         )
         Connect-MgGraph -Scopes $scopes -DeviceCode -NoWelcome -ErrorAction Stop | Out-Host
         $mgCtx = Get-MgContext -ErrorAction Stop
