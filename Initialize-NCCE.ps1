@@ -161,7 +161,8 @@ function TaskSP1GraphPermission {
     Write-Host "`t🔐 [Task] SP1 – Grant Directory.ReadWrite.All via Graph..." -ForegroundColor Yellow
 
     Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
-
+    Get-InstalledModule 
+    Start-Sleep -Seconds 5 # Ensure module is loaded before proceeding
     $mgApp1 = Get-MgApplication -Filter "appId eq '$($global:app1.AppId)'"
     if (-not $mgApp1) {
         throw "[Task] ERROR: Cannot find Graph Application with appId = '$($global:app1.AppId)'."
@@ -289,7 +290,7 @@ function TaskSP1GraphDirRole {
     Write-Host "`t🔗 [Task] SP1 – Assign 'Application Administrator' directory role via Graph..." -ForegroundColor Magenta
 
     Import-Module "$PSScriptRoot/Modules/GraphDirectoryRoleHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
-
+    
     Add-GraphDirectoryRoleAssignment -RoleDisplayName    "Application Administrator" `
                                      -ServicePrincipalId   $global:sp1.Id
 
