@@ -5,52 +5,65 @@ $ErrorActionPreference = 'Stop'
 function Add-GraphAppPermission {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$AppObjectId,   # Graph “Id” (GUID) from Get-MgApplication
-        [Parameter(Mandatory)][string]$GraphAppId,    # Typically "00000003-0000-0000-c000-000000000000"
-        [Parameter(Mandatory)][string]$PermissionValue # For example, "Directory.ReadWrite.All"
+        [Parameter(Mandatory)][string]$AppObjectId,    # ObjectId der AAD-Application
+        [Parameter(Mandatory)][string]$GraphAppId,     # i.d.R. "00000003-0000-0000-c000-000000000000"
+        [Parameter(Mandatory)][string]$PermissionValue # z.B. "Directory.ReadWrite.All"
     )
 
-    # 1) Find Microsoft Graph service principal
+    # 1) Microsoft Graph Service Principal holen
     $graphSp = Get-MgServicePrincipal -Filter "AppId eq '$GraphAppId'"
     if (-not $graphSp) {
         throw "Cannot find Microsoft Graph Service Principal (AppId: $GraphAppId)"
     }
 
-    # 2) Find the AppRole ID for the requested permission
+    # 2) AppRole im Graph-Katalog suchen
     $appRole = $graphSp.AppRoles | Where-Object { $_.Value -eq $PermissionValue }
     if (-not $appRole) {
         throw "Cannot find Graph AppRole for '$PermissionValue'"
     }
 
-    # 3) Get the existing MgApplication object
-    $mgApp = Get-MgApplication -Filter "Id eq '$AppObjectId'"
+     # 3) AAD-Application via direkte ID-Abfrage (mit Retry, falls noch nicht vollständig propagiert)
+    $mgApp       = $null
+    $maxAttempts = 100
+
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            # Direkter Abruf per ApplicationId (um Filter-Probleme zu vermeiden)
+            $mgApp = Get-MgApplication -ApplicationId $AppObjectId -ErrorAction Stop
+            if ($mgApp) { break }
+        }
+        catch {
+            # Wenn 404 oder NotFound, 2 Sek warten und erneut versuchen
+            Start-Sleep -Seconds 2
+        }
+    }
     if (-not $mgApp) {
-        throw "Cannot find Graph Application by ObjectId $AppObjectId"
+        throw "Cannot find Graph Application by ObjectId '$AppObjectId' after $maxAttempts attempts."
     }
 
-    # 4) Determine if RequiredResourceAccess entry exists
-    $existingRRA = $mgApp.RequiredResourceAccess | 
+    # 4) Prüfen, ob bereits ein RequiredResourceAccess-Eintrag für Graph existiert
+    $existingRRA = $mgApp.RequiredResourceAccess |
                    Where-Object { $_.ResourceAppId -eq $graphSp.AppId }
 
     if ($existingRRA) {
-        $already = $existingRRA.ResourceAccess | 
+        $already = $existingRRA.ResourceAccess |
                    Where-Object { $_.Id -eq $appRole.Id -and $_.Type -eq "Role" }
         if ($already) {
-            return  # nothing to do
+            return  # Berechtigung schon gesetzt, nichts zu tun
         }
 
-        # Add new ResourceAccess entry
+        # ResourceAccess-Liste erweitern
         $updatedAccess = $existingRRA.ResourceAccess + @{
             Id   = $appRole.Id
             Type = "Role"
         }
 
-        # Reconstruct RequiredResourceAccess array
+        # Neues RequiredResourceAccess-Array zusammenbauen
         $newRRA = $mgApp.RequiredResourceAccess | ForEach-Object {
             if ($_.ResourceAppId -eq $graphSp.AppId) {
                 @{
-                    ResourceAppId = $_.ResourceAppId
-                    ResourceAccess = $updatedAccess
+                    ResourceAppId   = $_.ResourceAppId
+                    ResourceAccess  = $updatedAccess
                 }
             }
             else {
@@ -59,23 +72,25 @@ function Add-GraphAppPermission {
         }
     }
     else {
-        # No existing entry for Graph: create one
+        # Kein bestehender Eintrag für Graph vorhanden → neu anlegen
         $newEntry = @{
-            ResourceAppId = $graphSp.AppId
+            ResourceAppId  = $graphSp.AppId
             ResourceAccess = @(@{
                 Id   = $appRole.Id
                 Type = "Role"
             })
         }
-
         $newRRA = @($newEntry) + $mgApp.RequiredResourceAccess
     }
 
-    # 5) Update the application
+    # 5) Application aktualisieren (RequiredResourceAccess)
     Update-MgApplication -ApplicationId $mgApp.Id -RequiredResourceAccess $newRRA
 
-    # 6) Grant admin consent via app role assignment
-    $mgSp = Get-MgServicePrincipal -Filter "AppId eq '$($mgApp.AppId)'"
+    # 6) AppRoleAssignment (Admin Consent) vergeben
+    #    Dazu brauchen wir das ServicePrincipal-Objekt der soeben
+    #    geänderten Application – wir filtern nach AppId (ClientId).
+    $mgSp = Get-MgServicePrincipal -Filter "AppId eq '$($mgApp.AppId)'" -ErrorAction Stop
+
     $params = @{
         PrincipalId = $mgSp.Id
         ResourceId  = $graphSp.Id
@@ -83,10 +98,13 @@ function Add-GraphAppPermission {
     }
 
     try {
-        New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $mgSp.Id -BodyParameter $params -ErrorAction Stop
+        New-MgServicePrincipalAppRoleAssignment `
+            -ServicePrincipalId $mgSp.Id `
+            -BodyParameter $params `
+            -ErrorAction Stop
     }
     catch {
-        # If error indicates “already exists,” ignore
+        # Falls "already exists", ignorieren, sonst weiterwerfen
         if ($_.Exception.Message -notmatch 'already exists') {
             throw $_
         }
