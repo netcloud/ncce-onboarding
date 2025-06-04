@@ -1,4 +1,5 @@
-# progress-example1.ps1 – Main entry for NCCE setup and tasks (streamlined)
+```powershell
+# Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP (komplett)
 $ErrorActionPreference = 'Stop'
 
 # --------------------------- Banner ---------------------------
@@ -14,11 +15,8 @@ function Show-Banner {
     Write-Host "`t`t`tRelease: Wandering Crimson Kraken 🐙`n" -ForegroundColor Magenta
 }
 
-# Show The Banner
-Show-Banner
-
 # --------------------------- Globals ---------------------------
-$global:stepResults    = @()   # collects { Name, Info } for summary
+$global:stepResults    = @()
 $global:contexts       = $null
 $global:tenantId       = $null
 $global:domain         = $null
@@ -47,7 +45,11 @@ function TaskInitAuth {
     Write-Host "`t🔑 [Task] Authenticating to Azure + Microsoft Graph..." -ForegroundColor Magenta
 
     Import-Module "$PSScriptRoot/Modules/AuthHelper.psm1" -Force -ErrorAction Stop
+    Write-Host "`t⏻ Disconnecting existing Azure and Graph sessions..." -ForegroundColor Green
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
+    try { Disconnect-AzAccount -ErrorAction SilentlyContinue } catch {}
 
+    # Hier findet interactive Login statt (Azure + Graph), mit den erforderlichen Scopes
     $global:contexts = Initialize-AuthContexts
 
     $global:tenantId = $contexts.Azure.Tenant.Id
@@ -73,7 +75,6 @@ function TaskSP1CreateApp {
 
     $info = "AppName: $app1Name; AppId: $($app1.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP1: Create App"; Info = $info }
 }
 
@@ -86,7 +87,6 @@ function TaskSP1CreateSP {
 
     $info = "AppName: $app1Name; ObjectId: $($sp1.Id)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP1: Create Service Principal"; Info = $info }
 }
 
@@ -120,7 +120,6 @@ function TaskSP2CreateApp {
 
     $info = "AppName: $app2Name; AppId: $($app2.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP2: Create App"; Info = $info }
 }
 
@@ -133,7 +132,6 @@ function TaskSP2CreateSP {
 
     $info = "AppName: $app2Name; ObjectId: $($sp2.Id)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP2: Create Service Principal"; Info = $info }
 }
 
@@ -160,17 +158,14 @@ function TaskSP2CreateCredential {
 function TaskSP1GraphPermission {
     Write-Host "`t🔐 [Task] SP1 – Grant Directory.ReadWrite.All via Graph..." -ForegroundColor Yellow
 
-    Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
-    
-    Start-Sleep -Seconds 5 # Ensure module is loaded before proceeding
-    $mgApp1 = Get-MgApplication -Filter "appId eq '$($global:app1.AppId)'"
-    if (-not $mgApp1) {
-        throw "[Task] ERROR: Cannot find Graph Application with appId = '$($global:app1.AppId)'."
-    }
+    # Helper-Modul für Graph-Berechtigungen laden
+    Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" `
+        -Force -ErrorAction Stop -DisableNameChecking
 
+    # Wir übergeben hier die ObjectId der Azure AD Application (nicht die SP-Id)
     Add-GraphAppPermission `
-        -AppObjectId    $mgApp1.Id `
-        -GraphAppId     '00000003-0000-0000-c000-000000000000' `
+        -AppObjectId     $global:app1.Id `
+        -GraphAppId      '00000003-0000-0000-c000-000000000000' `
         -PermissionValue 'Directory.ReadWrite.All'
 
     $info = "AppName: $app1Name; Permission Directory.ReadWrite.All granted"
@@ -186,13 +181,14 @@ function TaskSP1RBACOwner {
     Import-Module "$PSScriptRoot/Modules/AzureRbacHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
     $subId = $global:contexts.Azure.Subscription.Id
-    Add-AzRoleAssignment -ObjectId           $global:sp1.Id `
-                         -RoleDefinitionName "Owner" `
-                         -Scope              "/subscriptions/$subId"
+
+    Add-AzRoleAssignment `
+        -ObjectId           $global:sp1.Id `
+        -RoleDefinitionName "Owner" `
+        -Scope              "/subscriptions/$subId"
 
     $info = "AppName: $app1Name; Owner role on subscription $subId"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP1: Assign RBAC Owner"; Info = $info }
 }
 
@@ -232,16 +228,17 @@ function TaskSP1RBACCustomRole1 {
                          -TenantId       $global:tenantId `
                          -JsonDefinition $json1
 
-    Add-CustomRoleAssignment -ObjectId  $global:sp1.Id `
-                             -RoleName  $roleName1 `
-                             -Scope     $mgScope
+    Add-CustomRoleAssignment `
+        -ObjectId $global:sp1.Id `
+        -RoleName $roleName1 `
+        -Scope    $mgScope
 
     $info = "AppName: $app1Name; Custom role '$roleName1' created & assigned"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP1: Ensure Custom Role1 & Assign"; Info = $info }
 }
 
+# --------------------------- SP1: RBAC – Custom Role 2 ---------------------------
 function TaskSP1RBACCustomRole2 {
     Write-Host "`t🎨 [Task] SP1 – Ensure custom role 'cr-management-administrator' and assign it..." -ForegroundColor Magenta
 
@@ -275,13 +272,13 @@ function TaskSP1RBACCustomRole2 {
                          -TenantId       $global:tenantId `
                          -JsonDefinition $json2
 
-    Add-CustomRoleAssignment -ObjectId  $global:sp1.Id `
-                             -RoleName  $roleName2 `
-                             -Scope     $mgScope
+    Add-CustomRoleAssignment `
+        -ObjectId $global:sp1.Id `
+        -RoleName $roleName2 `
+        -Scope    $mgScope
 
     $info = "AppName: $app1Name; Custom role '$roleName2' created & assigned"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP1: Ensure Custom Role2 & Assign"; Info = $info }
 }
 
@@ -291,16 +288,24 @@ function TaskSP1GraphDirRole {
 
     Import-Module "$PSScriptRoot/Modules/GraphDirectoryRoleHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
     
-    Add-GraphDirectoryRoleAssignment -RoleDisplayName    "Application Administrator" `
-                                     -ServicePrincipalId   $global:sp1.Id
+    # App-Objekt ins Mg holen (falls nötig)
+    $mgApp1 = Get-MgApplication -Filter "appId eq '$($global:app1.AppId)'"
+    if (-not $mgApp1) {
+        throw "[Task] ERROR: Cannot find Graph Application with appId = '$($global:app1.AppId)'."
+    }
+
+    Add-GraphDirectoryRoleAssignment `
+        -RoleDisplayName     "Application Administrator" `
+        -ServicePrincipalId  $global:sp1.Id
 
     $info = "AppName: $app1Name; Application Administrator role assigned"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-
     $global:stepResults += @{ Name = "SP1: Assign Graph Dir Role (App Admin)"; Info = $info }
 }
 
 # --------------------------- Main Execution & Workflow ---------------------------
+Show-Banner
+
 $steps = @(
     @{ Name = "Setup Environment";                       Action = { SetupEnvironment             } },
     @{ Name = "Authenticate";                            Action = { TaskInitAuth                 } },
