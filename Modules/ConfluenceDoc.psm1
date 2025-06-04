@@ -30,8 +30,8 @@ function New-ConfluenceDoc {
         $doc += "| $step | Description for $step. |`n"
     }
     # Gib die generierte Dokumentation zum Copy/Paste für Confluence aus
-    Write-Host "`nCopy the following documentation to Confluence:`n"
-    Write-Host $doc
+    Write-Host "`nCopy the following documentation to Confluence:`n" -ForegroundColor Cyan
+    Write-Host $doc -ForegroundColor White
 }
 
 # Exportiere nur New-ConfluenceDoc

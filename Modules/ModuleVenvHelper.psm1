@@ -67,7 +67,7 @@ function Enable-ModuleVenv {
     }
 
     if ($needsBuild) {
-        if (-not $Quiet) { Write-Host "[Venv] Building module cache at $VenvRoot..." -ForegroundColor Yellow }
+        if (-not $Quiet) { Write-Host "[Venv] Building module cache at $VenvRoot..." -ForegroundColor Cyan }
         if (Test-Path $VenvRoot) {
             Remove-Item -Recurse -Force $VenvRoot
         }
@@ -84,7 +84,7 @@ function Enable-ModuleVenv {
 
     # Import each required module
     foreach ($mod in $RequiredAzModules + $RequiredGraphModules) {
-        if (-not $Quiet) { Write-Host "[Venv] Importing $($mod.Name) v$($mod.Version)..." -ForegroundColor Yellow }
+        if (-not $Quiet) { Write-Host "[Venv] Importing $($mod.Name) v$($mod.Version)..." -ForegroundColor Cyan }
         Import-Module -Name $mod.Name -RequiredVersion $mod.Version -Force -ErrorAction Stop
     }
 

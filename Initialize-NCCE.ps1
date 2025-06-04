@@ -10,8 +10,8 @@ function Show-Banner {
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 "@
-    Write-Host $banner -ForegroundColor Cyan
-    Write-Host "`t`t`tRelease: Wandering Crimson Kraken 🐙`n" -ForegroundColor Magenta
+    Write-Host $banner -ForegroundColor DarkCyan
+    Write-Host "`t`t`tRelease: Wandering Crimson Kraken 🐙`n" -ForegroundColor Gray
 }
 
 # --------------------------- Globals ---------------------------
@@ -30,7 +30,7 @@ $global:plainPassword2 = $null
 
 # --------------------------- Environment Setup ---------------------------
 function SetupEnvironment {
-    Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Magenta
+    Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/ModuleVenvHelper.psm1" -Force -ErrorAction Stop
     Enable-ModuleVenv
@@ -41,10 +41,10 @@ function SetupEnvironment {
 
 # --------------------------- Authentication ---------------------------
 function TaskInitAuth {
-    Write-Host "`t🔑 [Task] Authenticating to Azure + Microsoft Graph..." -ForegroundColor Magenta
+    Write-Host "`t🔑 [Task] Authenticating to Azure + Microsoft Graph..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AuthHelper.psm1" -Force -ErrorAction Stop
-    Write-Host "`t⏻ Disconnecting existing Azure and Graph sessions..." -ForegroundColor Green
+    Write-Host "`t⏻ Disconnecting existing Azure and Graph sessions..." -ForegroundColor Magenta
     try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
     try { Disconnect-AzAccount -ErrorAction SilentlyContinue } catch {}
 
@@ -55,9 +55,9 @@ function TaskInitAuth {
     $global:domain   = (Get-AzTenant -TenantId $tenantId).Domains[0]
 
     Write-Host "`n`t📄 [Summary] Authentication Details:" -ForegroundColor Cyan
-    Write-Host "`t`t• Azure Tenant ID   : $($contexts.Azure.Tenant.Id)" -ForegroundColor Green
-    Write-Host "`t`t• Azure Tenant Name : $($contexts.Azure.Tenant.Name)" -ForegroundColor Green
-    Write-Host "`t`t• Graph User        : $($contexts.Graph.Account)`n" -ForegroundColor Green
+    Write-Host "`t`t• Azure Tenant ID   : $($contexts.Azure.Tenant.Id)" -ForegroundColor White
+    Write-Host "`t`t• Azure Tenant Name : $($contexts.Azure.Tenant.Name)" -ForegroundColor White
+    Write-Host "`t`t• Graph User        : $($contexts.Graph.Account)`n" -ForegroundColor White
 
     $info = "Tenant: $($contexts.Azure.Tenant.Name); Graph User: $($contexts.Graph.Account)"
     $global:stepResults += @{ Name = "Authenticate"; Info = $info }
@@ -65,7 +65,7 @@ function TaskInitAuth {
 
 # --------------------------- SP1: sp-ncce-global-provisioner ---------------------------
 function TaskSP1CreateApp {
-    Write-Host "`t⚙️ [Task] SP1 – Ensure App 'sp-ncce-global-provisioner' exists..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP1 – Ensure App 'sp-ncce-global-provisioner' exists..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -78,7 +78,7 @@ function TaskSP1CreateApp {
 }
 
 function TaskSP1CreateSP {
-    Write-Host "`t⚙️ [Task] SP1 – Ensure Service Principal exists for App1..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP1 – Ensure Service Principal exists for App1..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -90,7 +90,7 @@ function TaskSP1CreateSP {
 }
 
 function TaskSP1CreateCredential {
-    Write-Host "`t⚙️ [Task] SP1 – Ensure client secret exists for App1..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP1 – Ensure client secret exists for App1..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -110,7 +110,7 @@ function TaskSP1CreateCredential {
 
 # --------------------------- SP2: sp-ncce-token-rotator ---------------------------
 function TaskSP2CreateApp {
-    Write-Host "`t⚙️ [Task] SP2 – Ensure App 'sp-ncce-token-rotator' exists..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP2 – Ensure App 'sp-ncce-token-rotator' exists..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -123,7 +123,7 @@ function TaskSP2CreateApp {
 }
 
 function TaskSP2CreateSP {
-    Write-Host "`t⚙️ [Task] SP2 – Ensure Service Principal exists for App2..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP2 – Ensure Service Principal exists for App2..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -135,7 +135,7 @@ function TaskSP2CreateSP {
 }
 
 function TaskSP2CreateCredential {
-    Write-Host "`t⚙️ [Task] SP2 – Ensure client secret exists for App2..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP2 – Ensure client secret exists for App2..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -155,7 +155,7 @@ function TaskSP2CreateCredential {
 
 # --------------------------- SP1: Graph Permissions ---------------------------
 function TaskSP1GraphPermission {
-    Write-Host "`t🔐 [Task] SP1 – Grant Directory.ReadWrite.All via Graph..." -ForegroundColor Yellow
+    Write-Host "`t🔐 [Task] SP1 – Grant Directory.ReadWrite.All via Graph..." -ForegroundColor Cyan
 
     # Helper-Modul für Graph-Berechtigungen laden
     Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" `
@@ -175,7 +175,7 @@ function TaskSP1GraphPermission {
 
 # --------------------------- SP1: RBAC – Owner ---------------------------
 function TaskSP1RBACOwner {
-    Write-Host "`t🔒 [Task] SP1 – Assign 'Owner' role at subscription scope..." -ForegroundColor Magenta
+    Write-Host "`t🔒 [Task] SP1 – Assign 'Owner' role at subscription scope..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureRbacHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -193,7 +193,7 @@ function TaskSP1RBACOwner {
 
 # --------------------------- SP1: RBAC – Custom Role 1 ---------------------------
 function TaskSP1RBACCustomRole1 {
-    Write-Host "`t🎨 [Task] SP1 – Ensure custom role 'cr-subscription-provisioner' and assign it..." -ForegroundColor Magenta
+    Write-Host "`t🎨 [Task] SP1 – Ensure custom role 'cr-subscription-provisioner' and assign it..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureRbacHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -239,7 +239,7 @@ function TaskSP1RBACCustomRole1 {
 
 # --------------------------- SP1: RBAC – Custom Role 2 ---------------------------
 function TaskSP1RBACCustomRole2 {
-    Write-Host "`t🎨 [Task] SP1 – Ensure custom role 'cr-management-administrator' and assign it..." -ForegroundColor Magenta
+    Write-Host "`t🎨 [Task] SP1 – Ensure custom role 'cr-management-administrator' and assign it..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/AzureRbacHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
@@ -283,7 +283,7 @@ function TaskSP1RBACCustomRole2 {
 
 # --------------------------- SP1: Graph Directory Role ---------------------------
 function TaskSP1GraphDirRole {
-    Write-Host "`t🔗 [Task] SP1 – Assign 'Application Administrator' directory role via Graph..." -ForegroundColor Magenta
+    Write-Host "`t🔗 [Task] SP1 – Assign 'Application Administrator' directory role via Graph..." -ForegroundColor Cyan
 
     Import-Module "$PSScriptRoot/Modules/GraphDirectoryRoleHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
     
@@ -337,7 +337,7 @@ for ($i = 0; $i -lt $total; $i++) {
 
     Write-Host "🎬 [Workflow] Starting: $currentStep" -ForegroundColor Cyan
     & $steps[$i].Action
-    Write-Host "✅ [Workflow] Completed: $currentStep`n" -ForegroundColor Cyan
+    Write-Host "✅ [Workflow] Completed: $currentStep`n" -ForegroundColor Green
 }
 
 # Mark the progress as complete (clears the bar)
@@ -357,4 +357,4 @@ foreach ($entry in $global:stepResults) {
     Write-Host " : " -NoNewline -ForegroundColor Gray
     Write-Host $entry.Info -ForegroundColor Cyan
 }
-Write-Host ""
+Write-Host "" -ForegroundColor White
