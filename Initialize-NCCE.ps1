@@ -1,4 +1,3 @@
-```powershell
 # Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP (komplett)
 $ErrorActionPreference = 'Stop'
 
@@ -307,37 +306,55 @@ function TaskSP1GraphDirRole {
 Show-Banner
 
 $steps = @(
-    @{ Name = "Setup Environment";                       Action = { SetupEnvironment             } },
-    @{ Name = "Authenticate";                            Action = { TaskInitAuth                 } },
-    @{ Name = "SP1: Create App";                         Action = { TaskSP1CreateApp             } },
-    @{ Name = "SP1: Create Service Principal";            Action = { TaskSP1CreateSP              } },
-    @{ Name = "SP1: Create Credential";                   Action = { TaskSP1CreateCredential      } },
-    @{ Name = "SP2: Create App";                         Action = { TaskSP2CreateApp             } },
-    @{ Name = "SP2: Create Service Principal";            Action = { TaskSP2CreateSP              } },
-    @{ Name = "SP2: Create Credential";                   Action = { TaskSP2CreateCredential      } },
-    @{ Name = "SP1: Grant Graph Permission";              Action = { TaskSP1GraphPermission       } },
-    @{ Name = "SP1: Assign RBAC Owner";                   Action = { TaskSP1RBACOwner             } },
-    @{ Name = "SP1: Ensure Custom Role1 & Assign";        Action = { TaskSP1RBACCustomRole1       } },
-    @{ Name = "SP1: Ensure Custom Role2 & Assign";        Action = { TaskSP1RBACCustomRole2       } },
-    @{ Name = "SP1: Assign Graph Dir Role (App Admin)";   Action = { TaskSP1GraphDirRole          } }
+    @{ Name = "Prepare Environment";                                  Action = { SetupEnvironment             } },
+    @{ Name = "Login to Azure & Microsoft Graph";                     Action = { TaskInitAuth                 } },
+    @{ Name = "Provisioner App: Create Application";                  Action = { TaskSP1CreateApp             } },
+    @{ Name = "Provisioner App: Create Service Principal";            Action = { TaskSP1CreateSP              } },
+    @{ Name = "Provisioner App: Create Client Secret";                Action = { TaskSP1CreateCredential      } },
+    @{ Name = "Token Rotator App: Create Application";                Action = { TaskSP2CreateApp             } },
+    @{ Name = "Token Rotator App: Create Service Principal";          Action = { TaskSP2CreateSP              } },
+    @{ Name = "Token Rotator App: Create Client Secret";              Action = { TaskSP2CreateCredential      } },
+    @{ Name = "Provisioner: Grant Directory.ReadWrite.All Permission";Action = { TaskSP1GraphPermission       } },
+    @{ Name = "Provisioner: Assign Owner Role to Subscription";       Action = { TaskSP1RBACOwner             } },
+    @{ Name = "Provisioner: Create & Assign 'Subscription Provisioner' Role"; Action = { TaskSP1RBACCustomRole1       } },
+    @{ Name = "Provisioner: Create & Assign 'Management Administrator' Role"; Action = { TaskSP1RBACCustomRole2       } },
+    @{ Name = "Provisioner: Assign 'Application Administrator' Directory Role"; Action = { TaskSP1GraphDirRole          } }
 )
 
 $total = $steps.Count
-for ($i = 0; $i -lt $total; $i++) {
-    $pct = [int](($i / $total) * 100)
-    Write-Progress -Activity "Overall Workflow" -Status $steps[$i].Name -PercentComplete $pct
 
-    Write-Host "🎬 [Workflow] Starting: $($steps[$i].Name)" -ForegroundColor Cyan
+for ($i = 0; $i -lt $total; $i++) {
+    $stepIndex   = $i + 1
+    $currentStep = $steps[$i].Name
+    $percent     = [int]($stepIndex / $total * 100)
+
+    # Show cloud progress bar with percentage
+    Write-Progress `
+        -Id               1 `
+        -Activity         "Cloud Engine Setup Progress: $percent% Complete" `
+        -Status           "Step $stepIndex/$total – $currentStep" `
+        -PercentComplete  $percent
+
+    Write-Host "🎬 [Workflow] Starting: $currentStep" -ForegroundColor Cyan
     & $steps[$i].Action
-    Write-Host "✅ [Workflow] Completed: $($steps[$i].Name)`n" -ForegroundColor Cyan
+    Write-Host "✅ [Workflow] Completed: $currentStep`n" -ForegroundColor Cyan
 }
 
-Write-Progress -Activity "Overall Workflow" -Status "Complete" -PercentComplete 100
-Write-Host "✅ [Workflow] All steps finished.`n" -ForegroundColor Green
-
+# Mark the progress as complete (clears the bar)
+Write-Progress -Id 1 -Activity "☁️ NCCE Setup Progress" -Completed
 # --------------------------- Summary ---------------------------
-Write-Host "`t📑 Step Summary:`n" -ForegroundColor Cyan
+Write-Host "`n📑  Step Summary:" -ForegroundColor Cyan
+
+# Determine padding based on the longest step name
+$maxNameLength = ($global:stepResults | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
+
 foreach ($entry in $global:stepResults) {
-    Write-Host "`t✅ $($entry.Name)   – $($entry.Info)" -ForegroundColor Magenta
+    $paddedName = $entry.Name.PadRight($maxNameLength)
+
+    # Green checkmark, white for name, gray separator, cyan for info
+    Write-Host "  ✅ " -NoNewline -ForegroundColor Green
+    Write-Host $paddedName -NoNewline -ForegroundColor White
+    Write-Host " : " -NoNewline -ForegroundColor Gray
+    Write-Host $entry.Info -ForegroundColor Cyan
 }
 Write-Host ""
