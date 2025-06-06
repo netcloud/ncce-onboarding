@@ -215,13 +215,30 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Storage/storageAccounts/*",
     "Microsoft.Resources/subscriptions/resourceGroups/*",
     "Microsoft.Resources/deployments/*",
-    "Microsoft.Resources/tags/*"
+    "Microsoft.Resources/tags/*",
+    "Microsoft.Network/networkSecurityGroups/*",
+    "Microsoft.Network/virtualNetworks/*",
+    "Microsoft.Network/networkInterfaces/*",
+    "Microsoft.Network/publicIPAddresses/*",
+    "Microsoft.Network/virtualNetworks/subnets/*",
+    "Microsoft.Compute/virtualMachineScaleSets/*",
+    "Microsoft.Compute/virtualMachines/*",
+    "Microsoft.Compute/availabilitySets/*",
+    "Microsoft.Compute/disks/*",
+    "Microsoft.Compute/images/*",
+    "Microsoft.ManagedIdentity/userAssignedIdentities/*",
+    "Microsoft.Insights/metricDefinitions/read",
+    "Microsoft.Insights/diagnosticSettings/*",
   ],
   "AssignableScopes": [
     "$mgScope"
   ]
 }
 "@
+
+    # Temporarily ensure SP1 has Owner permissions on the management group for role operations
+    Write-Host "`t`t→ Temporarily assigning Owner role to SP1 on mgScope" -ForegroundColor Yellow
+    Add-AzRoleAssignment -ObjectId $global:sp1.Id -RoleDefinitionName "Owner" -Scope $mgScope
 
     Add-AzCustomRole     -RoleName       $roleName1 `
                          -TenantId       $global:tenantId `
@@ -231,6 +248,10 @@ function TaskSP1RBACCustomRole1 {
         -ObjectId $global:sp1.Id `
         -RoleName $roleName1 `
         -Scope    $mgScope
+
+    # Remove temporary Owner role assignment
+    Write-Host "`t`t→ Removing temporary Owner role from SP1 on mgScope" -ForegroundColor Yellow
+    Remove-AzRoleAssignment -ObjectId $global:sp1.Id -RoleDefinitionName "Owner" -Scope $mgScope -ErrorAction SilentlyContinue | Out-Null
 
     $info = "AppName: $app1Name; Custom role '$roleName1' created & assigned"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
