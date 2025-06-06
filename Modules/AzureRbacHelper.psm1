@@ -31,17 +31,36 @@ function Add-AzCustomRole {
 
     # Output: returns role object or throws
     $existingRole = Get-AzRoleDefinition -Name $RoleName -ErrorAction SilentlyContinue
-    if ($existingRole) {
-        return $existingRole
-    }
-
-    # Create a temporary file for JSON
     $tmp = [IO.Path]::GetTempFileName() + ".json"
     $JsonDefinition | Out-File -FilePath $tmp -Encoding utf8
 
-    $newRole = New-AzRoleDefinition -InputFile $tmp -ErrorAction Stop
-    Remove-Item $tmp -ErrorAction SilentlyContinue
-    return $newRole
+    if ($existingRole) {
+        # Capture existing assignments
+        $assignments = Get-AzRoleAssignment -RoleDefinitionName $RoleName -ErrorAction SilentlyContinue
+        foreach ($a in $assignments) {
+            Remove-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionName $RoleName -Scope $a.Scope -ErrorAction SilentlyContinue | Out-Null
+        }
+        # Prepare updated JSON with existing Role Id
+        $roleObj = ConvertFrom-Json $JsonDefinition
+        $roleObj | Add-Member -MemberType NoteProperty -Name Id -Value $existingRole.Id
+        $roleObj | ConvertTo-Json -Depth 10 | Out-File -FilePath $tmp -Encoding utf8
+        # Update role definition
+        Set-AzRoleDefinition -InputFile $tmp -ErrorAction Stop | Out-Null
+        Write-Host "Custom role '$RoleName' updated." -ForegroundColor Green
+        # Reassign to previous principals
+        foreach ($a in $assignments) {
+            New-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionName $RoleName -Scope $a.Scope | Out-Null
+        }
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        return Get-AzRoleDefinition -Name $RoleName
+    }
+    else {
+        # Create new custom role
+        $newRole = New-AzRoleDefinition -InputFile $tmp -ErrorAction Stop
+        Write-Host "Custom role '$RoleName' created." -ForegroundColor Green
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        return $newRole
+    }
 }
 
 function Add-CustomRoleAssignment {
