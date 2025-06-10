@@ -229,6 +229,9 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.ManagedIdentity/userAssignedIdentities/*",
     "Microsoft.Insights/metricDefinitions/read",
     "Microsoft.Insights/diagnosticSettings/*",
+    "Microsoft.KeyVault/vaults/*",
+    "Microsoft.KeyVault/register/action",
+    "Microsoft.Insights/diagnosticSettings/*"
   ],
   "AssignableScopes": [
     "$mgScope"
@@ -275,12 +278,16 @@ function TaskSP1RBACCustomRole2 {
     "Microsoft.Management/managementGroups/read",
     "Microsoft.Management/managementGroups/write",
     "Microsoft.Management/managementGroups/delete",
+    "Microsoft.Management/managementGroups/subscriptions/read",
+    "Microsoft.Management/managementGroups/subscriptions/write",
     "Microsoft.Authorization/policyDefinitions/read",
     "Microsoft.Authorization/policyDefinitions/write",
     "Microsoft.Authorization/policyDefinitions/delete",
     "Microsoft.Resources/subscriptions/resourceGroups/read",
     "Microsoft.Resources/subscriptions/resourceGroups/write",
-    "Microsoft.Resources/subscriptions/resourceGroups/delete"
+    "Microsoft.Resources/subscriptions/resourceGroups/delete",
+    "Microsoft.Authorization/roleDefinitions/write",
+    "Microsoft.Authorization/roleDefinitions/read"
   ],
   "AssignableScopes": [
     "$mgScope"
