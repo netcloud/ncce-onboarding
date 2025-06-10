@@ -215,7 +215,11 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Storage/storageAccounts/*",
     "Microsoft.Resources/subscriptions/resourceGroups/*",
     "Microsoft.Resources/deployments/*",
-    "Microsoft.Resources/tags/*"
+    "Microsoft.Resources/tags/*",
+    "Microsoft.Insights/alertRules/*",
+    "Microsoft.Network/*",
+    "Microsoft.ResourceHealth/availabilityStatuses/read",
+    "Microsoft.Support/*"
   ],
   "AssignableScopes": [
     "$mgScope"
