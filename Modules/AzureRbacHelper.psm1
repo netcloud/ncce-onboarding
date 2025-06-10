@@ -18,7 +18,7 @@ function Add-AzRoleAssignment {
         return
     }
 
-    New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleDefinitionName -Scope $Scope | Out-Null
+    New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleDefinitionName -Scope $Scope
 }
 
 function Add-AzCustomRole {
@@ -79,7 +79,7 @@ function Add-CustomRoleAssignment {
         return
     }
 
-    New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleName -Scope $Scope | Out-Null
+    New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleName -Scope $Scope 
 }
 
 Export-ModuleMember -Function Add-AzRoleAssignment, Add-AzCustomRole, Add-CustomRoleAssignment
