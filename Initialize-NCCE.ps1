@@ -216,10 +216,19 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Resources/subscriptions/resourceGroups/*",
     "Microsoft.Resources/deployments/*",
     "Microsoft.Resources/tags/*",
-    "Microsoft.Insights/alertRules/*",
-    "Microsoft.Network/*",
-    "Microsoft.ResourceHealth/availabilityStatuses/read",
-    "Microsoft.Support/*"
+    "Microsoft.Network/networkSecurityGroups/*",
+    "Microsoft.Network/virtualNetworks/*",
+    "Microsoft.Network/networkInterfaces/*",
+    "Microsoft.Network/publicIPAddresses/*",
+    "Microsoft.Network/virtualNetworks/subnets/*",
+    "Microsoft.Compute/virtualMachineScaleSets/*",
+    "Microsoft.Compute/virtualMachines/*",
+    "Microsoft.Compute/availabilitySets/*",
+    "Microsoft.Compute/disks/*",
+    "Microsoft.Compute/images/*",
+    "Microsoft.ManagedIdentity/userAssignedIdentities/*",
+    "Microsoft.KeyVault/vaults/*",
+    "Microsoft.Insights/diagnosticSettings/*"
   ],
   "AssignableScopes": [
     "$mgScope"
