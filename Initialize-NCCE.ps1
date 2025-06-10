@@ -45,8 +45,8 @@ function TaskInitAuth {
 
     Import-Module "$PSScriptRoot/Modules/AuthHelper.psm1" -Force -ErrorAction Stop
     Write-Host "`t⏻ Disconnecting existing Azure and Graph sessions..." -ForegroundColor Green
-    try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
-    try { Disconnect-AzAccount -ErrorAction SilentlyContinue } catch {}
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try { Disconnect-AzAccount -ErrorAction SilentlyContinue | Out-Null } catch {}
 
     # Hier findet interactive Login statt (Azure + Graph), mit den erforderlichen Scopes
     $global:contexts = Initialize-AuthContexts
@@ -328,6 +328,20 @@ function TaskSP1GraphDirRole {
     $info = "AppName: $app1Name; Application Administrator role assigned"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP1: Assign Graph Dir Role (App Admin)"; Info = $info }
+}
+
+function TaskExportConfluenceDoc {
+    Write-Host "`t📄 [Task] Exporting Confluence documentation..." -ForegroundColor Magenta
+
+    Import-Module "$PSScriptRoot/Modules/ConfluenceDoc.generated.psm1" -Force -ErrorAction Stop
+
+    $outputFile = "$PSScriptRoot/NCCE_Confluence_Documentation.md"
+    Export-NcceConfluenceConfiguration `
+        -TenantName $global:contexts.Azure.Tenant.Name `
+        -OutputFile $outputFile
+
+    Write-Host "`t✅ [Task] Confluence doc exported to: $outputFile`n" -ForegroundColor Green
+    $global:stepResults += @{ Name = "Export Confluence Doc"; Info = "Documentation exported to $outputFile" }
 }
 
 # --------------------------- Main Execution & Workflow ---------------------------
