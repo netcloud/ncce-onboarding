@@ -228,6 +228,7 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Compute/images/*",
     "Microsoft.ManagedIdentity/userAssignedIdentities/*",
     "Microsoft.KeyVault/vaults/*",
+    "Microsoft.KeyVault/register/action",
     "Microsoft.Insights/diagnosticSettings/*"
   ],
   "AssignableScopes": [
