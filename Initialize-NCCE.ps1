@@ -258,6 +258,8 @@ function TaskSP1RBACCustomRole2 {
     "Microsoft.Management/managementGroups/read",
     "Microsoft.Management/managementGroups/write",
     "Microsoft.Management/managementGroups/delete",
+    "Microsoft.Management/managementGroups/subscriptions/read",
+    "Microsoft.Management/managementGroups/subscriptions/write",
     "Microsoft.Authorization/policyDefinitions/read",
     "Microsoft.Authorization/policyDefinitions/write",
     "Microsoft.Authorization/policyDefinitions/delete",
