@@ -1,7 +1,7 @@
-.pwsh_venv/
-Modules/.DS_Store
 # Ignore PowerShell virtual environment directory
+.pwsh_venv/
 # Ignore macOS Finder metadata files
+.DS_Store
 # Ignore Python virtual environment directory
 .pwsh_venv
 # Ignore Python cache files
