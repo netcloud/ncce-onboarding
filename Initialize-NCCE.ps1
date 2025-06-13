@@ -1,4 +1,4 @@
-# Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP (komplett)
+# Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP
 $ErrorActionPreference = 'Stop'
 
 # --------------------------- Banner ---------------------------
@@ -29,9 +29,15 @@ $global:sp2            = $null
 $global:plainPassword2 = $null
 
 # --------------------------- Environment Setup ---------------------------
+
+    Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Magenta
+    Import-Module "$PSScriptRoot/Modules/ModuleVenvHelper.psm1" -Force -ErrorAction Stop
+    Enable-ModuleVenv
+
+    Write-Host "`t✅ [Env] Module environment ready.`n" -ForegroundColor Green
+    $global:stepResults += @{ Name = "Setup Environment"; Info = "Module environment ready" }
 function SetupEnvironment {
     Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Magenta
-
     Import-Module "$PSScriptRoot/Modules/ModuleVenvHelper.psm1" -Force -ErrorAction Stop
     Enable-ModuleVenv
 
@@ -348,19 +354,20 @@ function TaskExportConfluenceDoc {
 Show-Banner
 
 $steps = @(
-    @{ Name = "Prepare Environment";                                  Action = { SetupEnvironment             } },
-    @{ Name = "Login to Azure & Microsoft Graph";                     Action = { TaskInitAuth                 } },
-    @{ Name = "Provisioner App: Create Application";                  Action = { TaskSP1CreateApp             } },
-    @{ Name = "Provisioner App: Create Service Principal";            Action = { TaskSP1CreateSP              } },
-    @{ Name = "Provisioner App: Create Client Secret";                Action = { TaskSP1CreateCredential      } },
-    @{ Name = "Token Rotator App: Create Application";                Action = { TaskSP2CreateApp             } },
-    @{ Name = "Token Rotator App: Create Service Principal";          Action = { TaskSP2CreateSP              } },
-    @{ Name = "Token Rotator App: Create Client Secret";              Action = { TaskSP2CreateCredential      } },
-    @{ Name = "Provisioner: Grant Directory.ReadWrite.All Permission";Action = { TaskSP1GraphPermission       } },
-    @{ Name = "Provisioner: Assign Owner Role to Subscription";       Action = { TaskSP1RBACOwner             } },
-    @{ Name = "Provisioner: Create & Assign 'Subscription Provisioner' Role"; Action = { TaskSP1RBACCustomRole1       } },
-    @{ Name = "Provisioner: Create & Assign 'Management Administrator' Role"; Action = { TaskSP1RBACCustomRole2       } },
-    @{ Name = "Provisioner: Assign 'Application Administrator' Directory Role"; Action = { TaskSP1GraphDirRole          } }
+    @{ Name = "Prepare Environment";                                            Action = { SetupEnvironment             } },
+    @{ Name = "Login to Azure & Microsoft Graph";                               Action = { TaskInitAuth                 } },
+    @{ Name = "Provisioner App: Create Application";                            Action = { TaskSP1CreateApp             } },
+    @{ Name = "Provisioner App: Create Service Principal";                      Action = { TaskSP1CreateSP              } },
+    @{ Name = "Provisioner App: Create Client Secret";                          Action = { TaskSP1CreateCredential      } },
+    @{ Name = "Token Rotator App: Create Application";                          Action = { TaskSP2CreateApp             } },
+    @{ Name = "Token Rotator App: Create Service Principal";                    Action = { TaskSP2CreateSP              } },
+    @{ Name = "Token Rotator App: Create Client Secret";                        Action = { TaskSP2CreateCredential      } },
+    @{ Name = "Provisioner: Grant Directory.ReadWrite.All Permission";          Action = { TaskSP1GraphPermission       } },
+    @{ Name = "Provisioner: Assign Owner Role to Subscription";                 Action = { TaskSP1RBACOwner             } },
+    @{ Name = "Provisioner: Create & Assign 'Subscription Provisioner' Role";   Action = { TaskSP1RBACCustomRole1       } },
+    @{ Name = "Provisioner: Create & Assign 'Management Administrator' Role";   Action = { TaskSP1RBACCustomRole2       } },
+    @{ Name = "Provisioner: Assign 'Application Administrator' Directory Role"; Action = { TaskSP1GraphDirRole          } },
+    @{ Name = "Disconnect from Graph for your Safety";                          Action = { Disconnect-MgGraph     } }
 )
 
 $total = $steps.Count

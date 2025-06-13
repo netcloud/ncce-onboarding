@@ -14,8 +14,6 @@ The `Initialize-NCCE.ps1` script automates creation and configuration of Azure A
 - Granting Graph permissions (`GraphPermissionHelper`)
 - Assigning Graph directory roles (`GraphDirectoryRoleHelper`)
 
-By splitting logic into modules, maintenance is easier and console output is consistent.
-
 ## Features
 
 - **Environment Setup**  
@@ -53,6 +51,7 @@ By splitting logic into modules, maintenance is easier and console output is con
 - Global Administrator or Application Administrator rights in Azure AD  
 - Owner role on the subscription you target  
 - Owner (or equivalent) at tenant-root management group  
+- Elevated Access Azure AD -> Properties -> Access management for Azure resources switch to Yes
 
 ## Required Permissions
 
@@ -97,7 +96,7 @@ Microsoft Graph device-code login → enter code at https://microsoft.com/device
 Wait for each step to complete; key details will be printed as they run.
 At the end, a “📑 Step Summary” displays all steps and their info.
 Note: Copy any client secret shown to a secure location. It will not be repeated.
-Output
+
 
 Running the script will produce:
 
