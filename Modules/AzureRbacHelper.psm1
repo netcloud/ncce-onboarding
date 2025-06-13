@@ -59,22 +59,29 @@ function Add-AzCustomRole {
         # Fetch the updated role definition once
         $updatedRole = Get-AzRoleDefinition -Name $RoleName -ErrorAction Stop
 
-        # Reassign to principals with retries using the updated role Id
+        # Reassign to principals with retries using the updated role Id.
+        # Any missing or invalid principals encountered during New-AzRoleAssignment
+        # will be logged as warnings and skipped.
         $maxAttempts = 5; $delay = 10
         foreach ($a in $assignments) {
             $attempt = 1
             while ($attempt -le $maxAttempts) {
                 try {
-                    New-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionId $updatedRole.Id -Scope $a.Scope -ErrorAction Stop | Out-
+                    New-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionId $updatedRole.Id -Scope $a.Scope -ErrorAction Stop | Out-Null
                     Write-Host "Assigned role to $($a.ObjectId) on attempt $attempt." -ForegroundColor Green
                     break
                 } catch {
+                    $errMsg = $_.Exception.Message
+                    if ($errMsg -match 'principal' -and ($errMsg -match 'not\s+found' -or $errMsg -match 'does\s+not\s+exist' -or $errMsg -match 'invalid')) {
+                        Write-Warning "Skipping assignment to $($a.ObjectId): $errMsg"
+                        break
+                    }
                     if ($attempt -lt $maxAttempts) {
-                        Write-Host "Assignment attempt $attempt failed (${($_.Exception.Message)}), waiting $delay seconds..." -ForegroundColor Yellow
+                        Write-Host "Assignment attempt $attempt failed (${errMsg}), waiting $delay seconds..." -ForegroundColor Yellow
                         Start-Sleep -Seconds $delay
                         $attempt++
                     } else {
-                        throw "Failed to assign role to $($a.ObjectId) after $maxAttempts attempts: $($_.Exception.Message)"
+                        throw "Failed to assign role to $($a.ObjectId) after $maxAttempts attempts: $errMsg"
                     }
                 }
             }
