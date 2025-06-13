@@ -65,7 +65,7 @@ function Add-AzCustomRole {
             $attempt = 1
             while ($attempt -le $maxAttempts) {
                 try {
-                    New-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionId $updatedRole.Id -Scope $a.Scope -ErrorAction Stop | Out-
+                    New-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionId $updatedRole.Id -Scope $a.Scope -ErrorAction Stop | Out-Host
                     Write-Host "Assigned role to $($a.ObjectId) on attempt $attempt." -ForegroundColor Green
                     break
                 } catch {
