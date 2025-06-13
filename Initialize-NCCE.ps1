@@ -29,13 +29,6 @@ $global:sp2            = $null
 $global:plainPassword2 = $null
 
 # --------------------------- Environment Setup ---------------------------
-
-    Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Magenta
-    Import-Module "$PSScriptRoot/Modules/ModuleVenvHelper.psm1" -Force -ErrorAction Stop
-    Enable-ModuleVenv
-
-    Write-Host "`t✅ [Env] Module environment ready.`n" -ForegroundColor Green
-    $global:stepResults += @{ Name = "Setup Environment"; Info = "Module environment ready" }
 function SetupEnvironment {
     Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Magenta
     Import-Module "$PSScriptRoot/Modules/ModuleVenvHelper.psm1" -Force -ErrorAction Stop
@@ -377,7 +370,7 @@ for ($i = 0; $i -lt $total; $i++) {
     $currentStep = $steps[$i].Name
     $percent     = [int]($stepIndex / $total * 100)
 
-    # Show cloud progress bar with percentage
+    # Show progress bar with percentage
     Write-Progress `
         -Id               1 `
         -Activity         "Cloud Engine Setup Progress: $percent% Complete" `
