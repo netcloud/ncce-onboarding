@@ -2,25 +2,78 @@
 
 $ErrorActionPreference = 'Stop'
 
+# Utility: Check that a service principal actually exists in the directory.
+function Test-ServicePrincipalExists {
+    param(
+        [Parameter(Mandatory)][string]$ObjectId
+    )
+    return (Get-AzADServicePrincipal -ObjectId $ObjectId -ErrorAction SilentlyContinue) -ne $null
+}
+function Use-AzContextForScope {
+    param(
+        [Parameter(Mandatory)][string]$Scope,
+        [string]$TenantId = $(Get-AzContext).Tenant.Id
+    )
+
+    # Extract subscriptionId if the scope contains it
+    if ($Scope -match '/subscriptions/([0-9a-fA-F-]{36})') {
+        $subId = $Matches[1]
+        $ctx = Get-AzContext
+        if ($ctx.Subscription.Id -ne $subId) {
+            Select-AzSubscription -SubscriptionId $subId -TenantId $TenantId -ErrorAction Stop | Out-Null
+        }
+    }
+}
+
 function Add-AzRoleAssignment {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ObjectId,             # SP ObjectId
-        [Parameter(Mandatory)][string]$RoleDefinitionName,   # e.g. "Owner"
-        [Parameter(Mandatory)][string]$Scope                   # e.g. "/subscriptions/<subId>"
+        [Parameter(Mandatory)][string]$RoleDefinitionName,   # Role name (built‑in or custom)
+        [Parameter(Mandatory)][string]$Scope,                # e.g. "/subscriptions/<subId>"
+        [string]$TenantId = $(Get-AzContext).Tenant.Id
     )
 
-    $existing = Get-AzRoleAssignment -ObjectId $ObjectId `
-                                     -RoleDefinitionName $RoleDefinitionName `
-                                     -Scope $Scope `
-                                     -ErrorAction SilentlyContinue
+    # Validate principal
+    if (-not (Test-ServicePrincipalExists -ObjectId $ObjectId)) {
+        Write-Warning "Skip assignment: principal $ObjectId not found."
+        return
+    }
+
+    # Pin context to correct subscription
+    Use-AzContextForScope -Scope $Scope -TenantId $TenantId
+
+    # Resolve role definition and always work with its GUID
+    $role = Get-AzRoleDefinition -Name $RoleDefinitionName -ErrorAction Stop |
+            Select-Object -First 1
+    if (-not $role) {
+        throw "Role '$RoleDefinitionName' not found."
+    }
+
+    # Check for an active assignment (ignore deleted/orphaned)
+    $existing = Get-AzRoleAssignment -ObjectId $ObjectId -Scope $Scope -ErrorAction SilentlyContinue |
+                Where-Object { $_.RoleDefinitionId -eq $role.Id -and -not $_.DeletedDateTime }
     if ($existing) {
         return
     }
 
-    New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleDefinitionName -Scope $Scope
+    # Assign with retry back‑off (handles transient 400/409)
+    $maxAttempts = 5
+    for ($i = 1; $i -le $maxAttempts; $i++) {
+        try {
+            New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionId $role.Id -Scope $Scope -ErrorAction Stop | Out-Null
+            Write-Host "Assigned role '$RoleDefinitionName' to $ObjectId." -ForegroundColor Green
+            break
+        } catch {
+            if ($i -eq $maxAttempts) { throw }
+            Write-Host "Attempt $i failed: $($_.Exception.Message) – retrying in $([int]($i*5)) s" -ForegroundColor Yellow
+            Start-Sleep -Seconds ($i*5)
+        }
+    }
 }
 
+# ---------------------------------------------------------------------------
+# Add a *custom* role definition and return it – idempotent update version
 function Add-AzCustomRole {
     [CmdletBinding()]
     param(
@@ -29,99 +82,56 @@ function Add-AzCustomRole {
         [Parameter(Mandatory)][string]$JsonDefinition
     )
 
-    # Create a temporary JSON file
+    # Write JSON spec to a temp file
     $tmp = [IO.Path]::GetTempFileName() + ".json"
     $JsonDefinition | Out-File -FilePath $tmp -Encoding utf8
 
-    # Check for existing role definition
-    $existingRole = Get-AzRoleDefinition -Name $RoleName -ErrorAction SilentlyContinue
-
-    if ($existingRole) {
-        # Backup and remove current assignments
-        $assignments = Get-AzRoleAssignment -RoleDefinitionName $RoleName -ErrorAction SilentlyContinue
-        foreach ($a in $assignments) {
-            Remove-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionName $RoleName -Scope $a.Scope -ErrorAction SilentlyContinue | Out-Null
-        }
-
-        # Update JSON to include existing role Id
-        $roleObj = ConvertFrom-Json $JsonDefinition
-        $roleObj | Add-Member -MemberType NoteProperty -Name Id -Value $existingRole.Id
-        $roleObj | ConvertTo-Json -Depth 10 | Out-File -FilePath $tmp -Encoding utf8
-
-        # Update the role definition
+    $role = Get-AzRoleDefinition -Name $RoleName -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($role) {
+        # Keep existing assignments – just update the definition
+        # Inject existing Id so Set-AzRoleDefinition performs an update
+        $obj = ConvertFrom-Json $JsonDefinition
+        $obj | Add-Member -MemberType NoteProperty -Name Id -Value $role.Id -Force
+        $obj | ConvertTo-Json -Depth 10 | Out-File $tmp -Encoding utf8
         Set-AzRoleDefinition -InputFile $tmp -ErrorAction Stop | Out-Null
         Write-Host "Custom role '$RoleName' updated." -ForegroundColor Green
-
-        # Wait for propagation
-        Write-Host "Waiting for role propagation..." -ForegroundColor Cyan
-        Start-Sleep -Seconds 30
-
-        # Fetch the updated role definition once
-        $updatedRole = Get-AzRoleDefinition -Name $RoleName -ErrorAction Stop
-
-        # Reassign to principals with retries using the updated role Id.
-        # Any missing or invalid principals encountered during New-AzRoleAssignment
-        # will be logged as warnings and skipped.
-        $maxAttempts = 5; $delay = 10
-        foreach ($a in $assignments) {
-            $attempt = 1
-            while ($attempt -le $maxAttempts) {
-                try {
-                    New-AzRoleAssignment -ObjectId $a.ObjectId -RoleDefinitionId $updatedRole.Id -Scope $a.Scope -ErrorAction Stop | Out-Null
-                    Write-Host "Assigned role to $($a.ObjectId) on attempt $attempt." -ForegroundColor Green
-                    break
-                } catch {
-                    $errMsg = $_.Exception.Message
-                    if ($errMsg -match 'principal' -and ($errMsg -match 'not\s+found' -or $errMsg -match 'does\s+not\s+exist' -or $errMsg -match 'invalid')) {
-                        Write-Warning "Skipping assignment to $($a.ObjectId): $errMsg"
-                        break
-                    }
-                    if ($attempt -lt $maxAttempts) {
-                        Write-Host "Assignment attempt $attempt failed (${errMsg}), waiting $delay seconds..." -ForegroundColor Yellow
-                        Start-Sleep -Seconds $delay
-                        $attempt++
-                    } else {
-                        throw "Failed to assign role to $($a.ObjectId) after $maxAttempts attempts: $errMsg"
-                    }
-                }
-            }
-        }
-
         Remove-Item $tmp -ErrorAction SilentlyContinue
-        return $updatedRole
+        return (Get-AzRoleDefinition -Id $role.Id)
     }
     else {
-        # Create a new custom role
         $newRole = New-AzRoleDefinition -InputFile $tmp -ErrorAction Stop
-        Write-Host "New custom role '$RoleName' created." -ForegroundColor Green
-
-        # Wait for propagation
-        Write-Host "Waiting for role propagation..." -ForegroundColor Cyan
-        Start-Sleep -Seconds 30
-
+        Write-Host "Custom role '$RoleName' created." -ForegroundColor Green
         Remove-Item $tmp -ErrorAction SilentlyContinue
         return $newRole
     }
 }
 
-
+# ---------------------------------------------------------------------------
+# Assign a *custom* role (by name) safely
 function Add-CustomRoleAssignment {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$ObjectId,            # SP ObjectId
-        [Parameter(Mandatory)][string]$RoleName,            # Already-created role name
-        [Parameter(Mandatory)][string]$Scope                # e.g. "/providers/Microsoft.Management/managementGroups/<tenant-guid>"
+        [Parameter(Mandatory)][string]$ObjectId,
+        [Parameter(Mandatory)][string]$RoleName,
+        [Parameter(Mandatory)][string]$Scope,
+        [string]$TenantId = $(Get-AzContext).Tenant.Id
     )
 
-    $existing = Get-AzRoleAssignment -ObjectId $ObjectId `
-                                     -RoleDefinitionName $RoleName `
-                                     -Scope $Scope `
-                                     -ErrorAction SilentlyContinue
-    if ($existing) {
+    # Validate principal
+    if (-not (Test-ServicePrincipalExists -ObjectId $ObjectId)) {
+        Write-Warning "Skip assignment: principal $ObjectId not found."
         return
     }
 
-    New-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleName -Scope $Scope 
+    # Pin context
+    Use-AzContextForScope -Scope $Scope -TenantId $TenantId
+
+    # Resolve role definition
+    $role = Get-AzRoleDefinition -Name $RoleName -ErrorAction Stop | Select-Object -First 1
+    if (-not $role) { throw "Role '$RoleName' not found." }
+
+    # Reuse generic function above
+    Add-AzRoleAssignment -ObjectId $ObjectId -RoleDefinitionName $RoleName -Scope $Scope -TenantId $TenantId
 }
 
-Export-ModuleMember -Function Add-AzRoleAssignment, Add-AzCustomRole, Add-CustomRoleAssignment
+Export-ModuleMember -Function Test-ServicePrincipalExists, Use-AzContextForScope, Add-AzRoleAssignment,  Add-AzCustomRole, Add-CustomRoleAssignment
