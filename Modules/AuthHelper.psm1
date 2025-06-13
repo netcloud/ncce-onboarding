@@ -4,7 +4,6 @@
 # The function name uses an approved verb “Initialize”.
 
 $ErrorActionPreference = 'Stop'
-
 function Initialize-AuthContexts {
     <#
     .SYNOPSIS
@@ -46,6 +45,8 @@ function Initialize-AuthContexts {
     }
     else {
         Write-Host "[Auth] Microsoft Graph already signed in" -ForegroundColor Green
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Host
+
     }
 
     return @{ Azure = $azCtx; Graph = $mgCtx }
