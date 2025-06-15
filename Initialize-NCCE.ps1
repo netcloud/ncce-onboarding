@@ -221,6 +221,7 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Network/publicIPAddresses/*",
     "Microsoft.Network/register/action",
     "Microsoft.Network/virtualNetworks/subnets/*",
+    "Microsoft.Compute/register/action",
     "Microsoft.Compute/virtualMachineScaleSets/*",
     "Microsoft.Compute/virtualMachines/*",
     "Microsoft.Compute/availabilitySets/*",
