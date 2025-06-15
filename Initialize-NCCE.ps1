@@ -71,7 +71,7 @@ function TaskSP1CreateApp {
     $global:app1Name = "sp-ncce-global-provisioner"
     $global:app1 = Get-OrCreate-AzApp -DisplayName $app1Name -IdentifierUriBase "https://$domain"
 
-    $info = "AppName: $app1Name; AppId: $($app1.AppId)"
+    $info = "AppName: $app1Name; Service Principal Client ID: $($app1.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP1: Create App"; Info = $info }
 }
@@ -116,7 +116,7 @@ function TaskSP2CreateApp {
     $global:app2Name = "sp-ncce-token-rotator"
     $global:app2 = Get-OrCreate-AzApp -DisplayName $app2Name -IdentifierUriBase "https://$domain"
 
-    $info = "AppName: $app2Name; AppId: $($app2.AppId)"
+    $info = "AppName: $app2Name; Token Rotator Client ID: $($app2.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP2: Create App"; Info = $info }
 }
@@ -128,7 +128,7 @@ function TaskSP2CreateSP {
 
     $global:sp2 = Get-OrCreate-AzServicePrincipal -AppId $global:app2.AppId
 
-    $info = "AppName: $app2Name; ObjectId: $($sp2.Id)"
+    $info = "AppName: $app2Name; Token Rotator Object ID: $($sp2.Id)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP2: Create Service Principal"; Info = $info }
 }
@@ -219,6 +219,7 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Network/virtualNetworks/*",
     "Microsoft.Network/networkInterfaces/*",
     "Microsoft.Network/publicIPAddresses/*",
+    "Microsoft.Network/register/action",
     "Microsoft.Network/virtualNetworks/subnets/*",
     "Microsoft.Compute/virtualMachineScaleSets/*",
     "Microsoft.Compute/virtualMachines/*",
