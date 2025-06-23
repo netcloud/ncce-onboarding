@@ -288,7 +288,11 @@ function TaskSP1RBACCustomRole2 {
     "Microsoft.Resources/subscriptions/resourceGroups/write",
     "Microsoft.Resources/subscriptions/resourceGroups/delete",
     "Microsoft.Authorization/roleDefinitions/write",
-    "Microsoft.Authorization/roleDefinitions/read"
+    "Microsoft.Authorization/roleDefinitions/read",
+    "Microsoft.Management/managementGroups/subscriptions/delete",
+    "Microsoft.Authorization/roleAssignments/read",
+    "Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Authorization/roleAssignments/delete"
   ],
   "AssignableScopes": [
     "$mgScope"
