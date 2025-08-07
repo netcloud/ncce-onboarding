@@ -6,19 +6,16 @@ function Get-OrCreate-AzApp {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$DisplayName,
-        [Parameter(Mandatory)][string]$IdentifierUriBase  # e.g. "https://$domain"
+        [Parameter(Mandatory)][string]$IdentifierUriBase,
+        [ValidateSet('AzureADMyOrg','AzureADMultipleOrgs')][string]$Audience = 'AzureADMyOrg'
     )
 
-    # 1) Try to find existing App by DisplayName
     $app = Get-AzADApplication -DisplayName $DisplayName -ErrorAction SilentlyContinue
-    if ($app) {
-        return $app
-    }
+    if ($app) { return $app }
 
-    # 2) Create new App
-    $app = New-AzADApplication -DisplayName $DisplayName `
-                              -IdentifierUris "$IdentifierUriBase/$DisplayName" `
-                              -SignInAudience AzureADMyOrg
+    $app = New-AzADApplication -DisplayName $DisplayName \
+                               -IdentifierUris "$IdentifierUriBase/$DisplayName" \
+                               -SignInAudience $Audience
     return $app
 }
 
