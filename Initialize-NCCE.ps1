@@ -1,4 +1,14 @@
 # Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)] [string]$CompanyCode,
+    [Parameter(Mandatory)][string]$UamiLocation = 'westeurope',
+    [string]$UamiResourceGroup = "rg-$CompanyCode-ncce-uami",
+    [ValidateNotNullOrEmpty()] [string]$UamiName = "ncceCrossTenantUAMI"
+)
+# Hard-coded target subscription name
+$TargetSubscriptionName = "sub-$CompanyCode-ncce-plf-p"
+
 $ErrorActionPreference = 'Stop'
 
 # --------------------------- Banner ---------------------------
@@ -27,6 +37,84 @@ $global:app2Name       = $null
 $global:app2           = $null
 $global:sp2            = $null
 $global:plainPassword2 = $null
+$global:app2Name       = 'sp-ncce-token-rotator'
+
+$global:artefacts = [ordered]@{
+    Subscription            = ''
+    # --- UAMI ---------------------------------
+    UamiName                = ''
+    UamiClientId            = ''
+    UamiResourceId          = ''
+
+    # --- Token-rotator ------------------------
+    TokenRotatorAppId       = ''
+    TokenRotatorObjId       = ''
+    IdentifierUri           = ''
+    TokenRotatorSpObjId     = ''
+    FicIssuer               = ''
+    FicSubject              = ''
+
+    # --- Provisioner --------------------------
+    ProvisionerAppId        = ''
+    ProvisionerObjId        = ''
+    ProvisionerSpObjId      = ''
+    ProvisionerClientSecret = ''
+}
+
+
+# --------------------------- Helper Pin Az Context ---------------------------
+function Use-AzureTenantSub {
+    param([string]$TenantId,[string]$SubscriptionId)
+    Connect-AzAccount -Tenant $TenantId -UseDeviceAuthentication -ErrorAction Stop | Out-Null
+    if ($SubscriptionId) {
+        Select-AzSubscription -SubscriptionId $SubscriptionId -TenantId $TenantId -ErrorAction Stop | Out-Null
+    }
+}
+function Use-GraphTenant { param([string]$TenantId) Connect-MgGraph -TenantId $TenantId -NoWelcome -ErrorAction Stop | Out-Null }
+function TaskSelectTargetSubscription {
+    Write-Host "`t📌 [Task] Switch Az context to '$TargetSubscriptionName'…" -ForegroundColor Magenta
+
+    $sub = Get-AzSubscription -SubscriptionName $TargetSubscriptionName -ErrorAction SilentlyContinue
+    if (-not $sub) {
+        throw "Subscription '$TargetSubscriptionName' not found or not accessible for this account."
+    }
+
+    Select-AzSubscription -SubscriptionId $sub.Id -TenantId $sub.TenantId -ErrorAction Stop | Out-Null
+    Write-Host "`t`t→ Context set to SubscriptionId $($sub.Id)`n" -ForegroundColor Green
+    $global:stepResults += @{ Name = "Select Subscription"; Info = $sub.Id }
+}
+
+
+# --------------------------- Create or Reuse UAMI ---------------------------
+function TaskCreateOrUseUami {
+    Write-Host "`t⚙️ [Task] Ensure UAMI '$UamiName' in '$UamiResourceGroup'…" -ForegroundColor Magenta
+
+    $subId = (Get-AzContext).Subscription.Id
+    if (-not $subId) { throw "No Azure context – run TaskInitAuth first." }
+
+    # RG
+    $rg = Get-AzResourceGroup -Name $UamiResourceGroup -ErrorAction SilentlyContinue
+    if (-not $rg) {
+        $rg = New-AzResourceGroup -Name $UamiResourceGroup -Location $UamiLocation
+        Write-Host "`t`t→ Created RG $UamiResourceGroup" -ForegroundColor Green
+    }
+
+    # UAMI
+    $uami = Get-AzUserAssignedIdentity -ResourceGroupName $UamiResourceGroup -Name $UamiName -ErrorAction SilentlyContinue
+    if (-not $uami) {
+        $uami = New-AzUserAssignedIdentity -ResourceGroupName $UamiResourceGroup -Name $UamiName -Location $rg.Location
+        Write-Host "`t`t→ Created UAMI" -ForegroundColor Green
+    } else {
+        Write-Host "`t`t→ Reusing existing UAMI" -ForegroundColor Green
+    }
+
+    $script:UamiClientId    = $uami.ClientId
+    $script:UamiPrincipalId = $uami.PrincipalId
+    $script:UamiResourceId  = $uami.Id
+
+    $global:stepResults += @{ Name = "Create/Use UAMI"; Info = "clientId=$($uami.ClientId)" }
+}
+
 
 # --------------------------- Environment Setup ---------------------------
 function SetupEnvironment {
@@ -109,17 +197,40 @@ function TaskSP1CreateCredential {
 
 # --------------------------- SP2: sp-ncce-token-rotator ---------------------------
 function TaskSP2CreateApp {
-    Write-Host "`t⚙️ [Task] SP2 – Ensure App 'sp-ncce-token-rotator' exists..." -ForegroundColor Magenta
+    Write-Host "`t⚙️ [Task] SP2 – Ensure multi-tenant app '$app2Name'…" -ForegroundColor Magenta
+    Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -DisableNameChecking
 
-    Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
+    # 1) Create (or locate) the application – we give a throw-away Identifier URI if we’re creating it
+    $tempIdUri = "api://$(New-Guid)"          # only used on *new* apps
+    $global:app2 = Get-OrCreate-AzApp `
+                     -DisplayName       $app2Name `
+                     -IdentifierUriBase $tempIdUri `
+                     -Audience          'AzureADMultipleOrgs'
 
-    $global:app2Name = "sp-ncce-token-rotator"
-    $global:app2 = Get-OrCreate-AzApp -DisplayName $app2Name -IdentifierUriBase "https://$domain"
+    # 2) Ensure the definitive URI is api://<clientId>
+    $desiredIdUri = "api://$($global:app2.AppId)"
+    Use-GraphTenant -TenantId $global:tenantId           # assumes tenantId is set
 
-    $info = "AppName: $app2Name; Token Rotator Client ID: $($app2.AppId)"
+    $app = Get-MgApplication -ApplicationId $global:app2.Id
+    if (-not ($app.identifierUris -contains $desiredIdUri)) {
+        # Replace any existing URIs with the canonical one
+        Update-MgApplication -ApplicationId $app.Id -IdentifierUris @($desiredIdUri) | Out-Null
+        Write-Host "`t`t→ Identifier URI set to $desiredIdUri" -ForegroundColor Green
+    }
+
+    # 3) Add the Easy-Auth redirect URI if missing
+    $redirect = "https://app-$CompanyCode-ncce.azurewebsites.net/.auth/login/aad/callback"
+    if (-not ($app.web.redirectUris -contains $redirect)) {
+        $patch = @{ web = @{ redirectUris = $app.web.redirectUris + @($redirect) } }
+        Update-MgApplication -ApplicationId $app.Id -BodyParameter $patch | Out-Null
+        Write-Host "`t`t→ Added redirect URI $redirect" -ForegroundColor Green
+    }
+
+    $info = "App multi-tenant; clientId=$($app.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
-    $global:stepResults += @{ Name = "SP2: Create App"; Info = $info }
+    $global:stepResults += @{ Name = "SP2: Create/Update App"; Info = $info }
 }
+
 
 function TaskSP2CreateSP {
     Write-Host "`t⚙️ [Task] SP2 – Ensure Service Principal exists for App2..." -ForegroundColor Magenta
@@ -133,23 +244,27 @@ function TaskSP2CreateSP {
     $global:stepResults += @{ Name = "SP2: Create Service Principal"; Info = $info }
 }
 
-function TaskSP2CreateCredential {
-    Write-Host "`t⚙️ [Task] SP2 – Ensure client secret exists for App2..." -ForegroundColor Magenta
+function TaskSP2AddFic {
+    Write-Host "`t🔗 [Task] SP2 – Ensure FIC for UAMI…" -ForegroundColor Magenta
+    if (-not $script:UamiPrincipalId) { throw "UAMI must be created first." }
 
-    Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
+    Use-GraphTenant -TenantId $global:tenantId
+    $issuer  = "https://login.microsoftonline.com/$($global:tenantId)/v2.0"
+    $subject = $script:UamiPrincipalId
+    $ficName = "uami-fic"
 
-    $credInfo2 = Get-OrCreate-AzAppCredential -AppId $global:app2.AppId
-    $global:plainPassword2 = $credInfo2.SecretText
+    $fic = Get-MgApplicationFederatedIdentityCredential -ApplicationId $app2.Id -ErrorAction SilentlyContinue |
+           Where-Object { $_.Issuer -eq $issuer -and $_.Subject -eq $subject }
 
-    if ($plainPassword2) {
-        $info = "AppName: $app2Name; New secret: $plainPassword2"
-        Write-Host "`t`t→ $info`n" -ForegroundColor Red
+    if (-not $fic) {
+        $body = @{ name = $ficName; issuer = $issuer; subject = $subject; audiences = @('api://AzureADTokenExchange') }
+        New-MgApplicationFederatedIdentityCredential -ApplicationId $app2.Id -BodyParameter $body | Out-Null
+        Write-Host "`t`t→ FIC created" -ForegroundColor Green
     } else {
-        $info = "AppName: $app2Name; Existing secret reused"
-        Write-Host "`t`t→ $info`n" -ForegroundColor Green
+        Write-Host "`t`t→ FIC already exists" -ForegroundColor Green
     }
 
-    $global:stepResults += @{ Name = "SP2: Create Credential"; Info = $info }
+    $global:stepResults += @{ Name = "SP2: Add FIC"; Info = "issuer=$issuer" }
 }
 
 # --------------------------- SP1: Graph Permissions ---------------------------
@@ -355,18 +470,20 @@ Show-Banner
 $steps = @(
     @{ Name = "Prepare Environment";                                            Action = { SetupEnvironment             } },
     @{ Name = "Login to Azure & Microsoft Graph";                               Action = { TaskInitAuth                 } },
+    @{ Name = "Select Target Subscription";                                     Action = { TaskSelectTargetSubscription } },
+    @{ Name = "Create / Re-use UAMI";                                           Action = { TaskCreateOrUseUami          } },
     @{ Name = "Provisioner App: Create Application";                            Action = { TaskSP1CreateApp             } },
     @{ Name = "Provisioner App: Create Service Principal";                      Action = { TaskSP1CreateSP              } },
     @{ Name = "Provisioner App: Create Client Secret";                          Action = { TaskSP1CreateCredential      } },
     @{ Name = "Token Rotator App: Create Application";                          Action = { TaskSP2CreateApp             } },
     @{ Name = "Token Rotator App: Create Service Principal";                    Action = { TaskSP2CreateSP              } },
-    @{ Name = "Token Rotator App: Create Client Secret";                        Action = { TaskSP2CreateCredential      } },
+    @{ Name = "Token Rotator App: Add FIC";                                     Action = { TaskSP2AddFic                } },
     @{ Name = "Provisioner: Grant Directory.ReadWrite.All Permission";          Action = { TaskSP1GraphPermission       } },
     @{ Name = "Provisioner: Assign Owner Role to Subscription";                 Action = { TaskSP1RBACOwner             } },
     @{ Name = "Provisioner: Create & Assign 'Subscription Provisioner' Role";   Action = { TaskSP1RBACCustomRole1       } },
     @{ Name = "Provisioner: Create & Assign 'Management Administrator' Role";   Action = { TaskSP1RBACCustomRole2       } },
     @{ Name = "Provisioner: Assign 'Application Administrator' Directory Role"; Action = { TaskSP1GraphDirRole          } },
-    @{ Name = "Disconnect from Graph for your Safety";                          Action = { Disconnect-MgGraph     } }
+    @{ Name = "Disconnect from Graph for your Safety";                          Action = { Disconnect-MgGraph           } }
 )
 
 $total = $steps.Count
