@@ -1,11 +1,13 @@
 # Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP
 [CmdletBinding()]
+
 param(
     [Parameter(Mandatory)] [string]$CompanyCode,
-    [Parameter(Mandatory)][string]$UamiLocation = 'westeurope',
-    [string]$UamiResourceGroup = "rg-$CompanyCode-ncce-uami",
-    [ValidateNotNullOrEmpty()] [string]$UamiName = "ncceCrossTenantUAMI"
+    [string]$UamiClientId      = '',
+    [string]$UamiPrincipalId   = '',
+    [string]$UamiResourceId    = ''
 )
+
 # Hard-coded target subscription name
 $TargetSubscriptionName = "sub-$CompanyCode-ncce-plf-p"
 
@@ -246,26 +248,62 @@ function TaskSP2CreateSP {
 
 function TaskSP2AddFic {
     Write-Host "`t🔗 [Task] SP2 – Ensure FIC for UAMI…" -ForegroundColor Magenta
-    if (-not $script:UamiPrincipalId) { throw "UAMI must be created first." }
+
+    if (-not $script:UamiPrincipalId) {
+        throw "UAMI must be created first."
+    }
 
     Use-GraphTenant -TenantId $global:tenantId
+
     $issuer  = "https://login.microsoftonline.com/$($global:tenantId)/v2.0"
     $subject = $script:UamiPrincipalId
     $ficName = "uami-fic"
 
-    $fic = Get-MgApplicationFederatedIdentityCredential -ApplicationId $app2.Id -ErrorAction SilentlyContinue |
-           Where-Object { $_.Issuer -eq $issuer -and $_.Subject -eq $subject }
+    # 1) Fetch any existing FIC by name+issuer+subject
+    $existing = Get-MgApplicationFederatedIdentityCredential `
+                  -ApplicationId $app2.Id `
+                  -ErrorAction SilentlyContinue |
+                Where-Object {
+                  $_.Name    -eq $ficName  -and
+                  $_.Issuer  -eq $issuer   -and
+                  $_.Subject -eq $subject
+                }
 
-    if (-not $fic) {
-        $body = @{ name = $ficName; issuer = $issuer; subject = $subject; audiences = @('api://AzureADTokenExchange') }
-        New-MgApplicationFederatedIdentityCredential -ApplicationId $app2.Id -BodyParameter $body | Out-Null
-        Write-Host "`t`t→ FIC created" -ForegroundColor Green
-    } else {
+    if ($null -eq $existing) {
+        try {
+            # 2) Create only if nothing matched
+            New-MgApplicationFederatedIdentityCredential `
+              -ApplicationId $app2.Id `
+              -BodyParameter @{
+                  name      = $ficName
+                  issuer    = $issuer
+                  subject   = $subject
+                  audiences = @('api://AzureADTokenExchange')
+              } `
+              -ErrorAction Stop
+
+            Write-Host "`t`t→ FIC created" -ForegroundColor Green
+        }
+        catch {
+            # 3) Swallow 409s and rethrow anything else
+            if ($_.Exception.Response.StatusCode.Value__ -eq 409) {
+                Write-Host "`t`t→ FIC already exists (409 conflict)" -ForegroundColor Yellow
+            }
+            else {
+                throw
+            }
+        }
+    }
+    else {
         Write-Host "`t`t→ FIC already exists" -ForegroundColor Green
     }
 
-    $global:stepResults += @{ Name = "SP2: Add FIC"; Info = "issuer=$issuer" }
+    $global:stepResults += @{
+      Name = "SP2: Add FIC"
+      Info = "issuer=$issuer; name=$ficName"
+    }
 }
+
 
 # --------------------------- SP1: Graph Permissions ---------------------------
 function TaskSP1GraphPermission {
@@ -467,11 +505,30 @@ function TaskExportConfluenceDoc {
 # --------------------------- Main Execution & Workflow ---------------------------
 Show-Banner
 
+# ---------------------------
+# Resolve UAMI up-front (create or reuse only if no inputs)
+# ---------------------------
+# If all three UAMI params are non-empty, seed the script variables.
+if ($UamiClientId -and $UamiPrincipalId -and $UamiResourceId) {
+  Write-Host "✔️  UAMI configured; will use:"
+  Write-Host "     ClientId   = $UamiClientId"
+  Write-Host "     PrincipalId= $UamiPrincipalId"
+  Write-Host "     ResourceId = $UamiResourceId"
+  $script:UamiClientId    = $UamiClientId
+  $script:UamiPrincipalId = $UamiPrincipalId
+  $script:UamiResourceId  = $UamiResourceId
+}
+else {
+  Write-Host "⚠️  No UAMI configuration provided; skipping UAMI creation and any UAMI-dependent steps." -ForegroundColor Yellow
+}
+
+
+
 $steps = @(
     @{ Name = "Prepare Environment";                                            Action = { SetupEnvironment             } },
     @{ Name = "Login to Azure & Microsoft Graph";                               Action = { TaskInitAuth                 } },
     @{ Name = "Select Target Subscription";                                     Action = { TaskSelectTargetSubscription } },
-    @{ Name = "Create / Re-use UAMI";                                           Action = { TaskCreateOrUseUami          } },
+    #@{ Name = "Create / Re-use UAMI";                                           Action = { TaskCreateOrUseUami          } },
     @{ Name = "Provisioner App: Create Application";                            Action = { TaskSP1CreateApp             } },
     @{ Name = "Provisioner App: Create Service Principal";                      Action = { TaskSP1CreateSP              } },
     @{ Name = "Provisioner App: Create Client Secret";                          Action = { TaskSP1CreateCredential      } },
