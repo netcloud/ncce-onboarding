@@ -1,6 +1,12 @@
-# Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP
-[CmdletBinding()]
+<# 
+  Initialize-NCCE.ps1 – NCCE PREREQUISITES SETUP (final)
+  - Clean outputs (Client IDs & Secret)
+  - FIC step skips with warning when UAMI missing
+  - Fixed step summary padding
+  - Identifier URI + redirect fix for token-rotator
+#>
 
+[CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string]$CompanyCode,
     [string]$UamiClientId      = '',
@@ -8,10 +14,10 @@ param(
     [string]$UamiResourceId    = ''
 )
 
+$ErrorActionPreference = 'Stop'
+
 # Hard-coded target subscription name
 $TargetSubscriptionName = "sub-$CompanyCode-ncce-plf-p"
-
-$ErrorActionPreference = 'Stop'
 
 # --------------------------- Banner ---------------------------
 function Show-Banner {
@@ -26,6 +32,14 @@ function Show-Banner {
     Write-Host "`t`t`tRelease: Wandering Crimson Kraken 🐙`n" -ForegroundColor Magenta
 }
 
+# ------------- Artefacts collected during run -------------
+# (Single canonical object; do NOT redefine elsewhere.)
+$global:Artefacts = [pscustomobject]@{
+    ProvisionerClientId      = $null
+    ProvisionerClientSecret  = $null
+    TokenRotatorClientId     = $null
+}
+
 # --------------------------- Globals ---------------------------
 $global:stepResults    = @()
 $global:contexts       = $null
@@ -35,36 +49,11 @@ $global:app1Name       = $null
 $global:app1           = $null
 $global:sp1            = $null
 $global:plainPassword1 = $null
-$global:app2Name       = $null
+$global:app2Name       = 'sp-ncce-token-rotator'
 $global:app2           = $null
 $global:sp2            = $null
-$global:plainPassword2 = $null
-$global:app2Name       = 'sp-ncce-token-rotator'
 
-$global:artefacts = [ordered]@{
-    Subscription            = ''
-    # --- UAMI ---------------------------------
-    UamiName                = ''
-    UamiClientId            = ''
-    UamiResourceId          = ''
-
-    # --- Token-rotator ------------------------
-    TokenRotatorAppId       = ''
-    TokenRotatorObjId       = ''
-    IdentifierUri           = ''
-    TokenRotatorSpObjId     = ''
-    FicIssuer               = ''
-    FicSubject              = ''
-
-    # --- Provisioner --------------------------
-    ProvisionerAppId        = ''
-    ProvisionerObjId        = ''
-    ProvisionerSpObjId      = ''
-    ProvisionerClientSecret = ''
-}
-
-
-# --------------------------- Helper Pin Az Context ---------------------------
+# --------------------------- Helper Pin Az/Graph Context ---------------------------
 function Use-AzureTenantSub {
     param([string]$TenantId,[string]$SubscriptionId)
     Connect-AzAccount -Tenant $TenantId -UseDeviceAuthentication -ErrorAction Stop | Out-Null
@@ -73,6 +62,7 @@ function Use-AzureTenantSub {
     }
 }
 function Use-GraphTenant { param([string]$TenantId) Connect-MgGraph -TenantId $TenantId -NoWelcome -ErrorAction Stop | Out-Null }
+
 function TaskSelectTargetSubscription {
     Write-Host "`t📌 [Task] Switch Az context to '$TargetSubscriptionName'…" -ForegroundColor Magenta
 
@@ -86,6 +76,66 @@ function TaskSelectTargetSubscription {
     $global:stepResults += @{ Name = "Select Subscription"; Info = $sub.Id }
 }
 
+function Get-MgApplicationEventually {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ObjectId,  # Graph objectId (GUID)
+        [Parameter(Mandatory)][string]$AppId,     # ClientId
+        [int]$TimeoutSeconds = 90
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $attempt  = 0
+    do {
+        $attempt++
+        try {
+            # First try by ObjectId (fast path)
+            $app = Get-MgApplication -ApplicationId $ObjectId -ErrorAction Stop
+            if ($app) { return $app }
+        } catch {
+            # Fall through to filter approach
+        }
+
+        try {
+            # Fallback: filter by appId (some tenants surface this earlier)
+            $app = Get-MgApplication -Filter "appId eq '$AppId'"
+            if ($app) { return $app }
+        } catch {
+            # ignore; we'll retry
+        }
+
+        $sleep = [Math]::Min(2 * $attempt, 8)  # 2,4,6,8…
+        Write-Host ("`t`t→ Graph not consistent yet (try {0}) – waiting {1}s…" -f $attempt,$sleep) -ForegroundColor Yellow
+        Start-Sleep -Seconds $sleep
+    } while ((Get-Date) -lt $deadline)
+
+    throw "Application not visible in Microsoft Graph after $TimeoutSeconds seconds (objectId=$ObjectId, appId=$AppId)."
+}
+
+
+# --------------------------- Credential Summary Output ---------------------------
+function Write-CredentialSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][pscustomobject]$Data,
+        [string]$Path = "$PSScriptRoot/NCCE_Credentials.json"
+    )
+
+    $line = ('═' * 65)
+    Write-Host "`n$line" -ForegroundColor Cyan
+    Write-Host "   NCCE – Service-Principal Credentials" -ForegroundColor White
+    Write-Host $line -ForegroundColor Cyan
+
+    $props = $Data.PSObject.Properties | Where-Object { $_.Value -ne $null -and $_.Value -ne '' }
+    $pad   = ($props | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
+    foreach ($p in $props) {
+        "{0} : {1}" -f $p.Name.PadRight($pad), $p.Value | Write-Host -ForegroundColor Green
+    }
+
+    Write-Host $line -ForegroundColor Cyan
+    $Data | ConvertTo-Json -Depth 3 | Set-Content -Path $Path -Encoding utf8
+    Write-Host "   → JSON copy written to $Path`n" -ForegroundColor Yellow
+}
 
 # --------------------------- Create or Reuse UAMI ---------------------------
 function TaskCreateOrUseUami {
@@ -117,7 +167,6 @@ function TaskCreateOrUseUami {
     $global:stepResults += @{ Name = "Create/Use UAMI"; Info = "clientId=$($uami.ClientId)" }
 }
 
-
 # --------------------------- Environment Setup ---------------------------
 function SetupEnvironment {
     Write-Host "`t🔧 [Env] Preparing PowerShell module environment..." -ForegroundColor Magenta
@@ -137,7 +186,7 @@ function TaskInitAuth {
     try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
     try { Disconnect-AzAccount -ErrorAction SilentlyContinue | Out-Null } catch {}
 
-    # Hier findet interactive Login statt (Azure + Graph), mit den erforderlichen Scopes
+    # Interactive login (Azure + Graph) with required scopes
     $global:contexts = Initialize-AuthContexts
 
     $global:tenantId = $contexts.Azure.Tenant.Id
@@ -164,6 +213,8 @@ function TaskSP1CreateApp {
     $info = "AppName: $app1Name; Service Principal Client ID: $($app1.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP1: Create App"; Info = $info }
+
+    $global:Artefacts.ProvisionerClientId = $global:app1.AppId
 }
 
 function TaskSP1CreateSP {
@@ -195,6 +246,8 @@ function TaskSP1CreateCredential {
     }
 
     $global:stepResults += @{ Name = "SP1: Create Credential"; Info = $info }
+
+    $global:Artefacts.ProvisionerClientSecret = $global:plainPassword1
 }
 
 # --------------------------- SP2: sp-ncce-token-rotator ---------------------------
@@ -202,35 +255,30 @@ function TaskSP2CreateApp {
     Write-Host "`t⚙️ [Task] SP2 – Ensure multi-tenant app '$app2Name'…" -ForegroundColor Magenta
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -DisableNameChecking
 
-    # 1) Create (or locate) the application – we give a throw-away Identifier URI if we’re creating it
-    $tempIdUri = "api://$(New-Guid)"          # only used on *new* apps
+    # Create the multi-tenant app WITHOUT IdentifierUris; api:// must equal the final AppId
     $global:app2 = Get-OrCreate-AzApp `
-                     -DisplayName       $app2Name `
-                     -IdentifierUriBase $tempIdUri `
-                     -Audience          'AzureADMultipleOrgs'
+                     -DisplayName $global:app2Name `
+                     -Audience    'AzureADMultipleOrgs'
 
-    # 2) Ensure the definitive URI is api://<clientId>
+    # Switch Graph to the right tenant
+    Use-GraphTenant -TenantId $global:tenantId
+
+    # Wait for Graph consistency, then set identifier URI = api://{appId}
+    $mgApp = Get-MgApplicationEventually -ObjectId $global:app2.Id -AppId $global:app2.AppId
     $desiredIdUri = "api://$($global:app2.AppId)"
-    Use-GraphTenant -TenantId $global:tenantId           # assumes tenantId is set
 
-    $app = Get-MgApplication -ApplicationId $global:app2.Id
-    if (-not ($app.identifierUris -contains $desiredIdUri)) {
-        # Replace any existing URIs with the canonical one
-        Update-MgApplication -ApplicationId $app.Id -IdentifierUris @($desiredIdUri) | Out-Null
+    if (-not ($mgApp.IdentifierUris -contains $desiredIdUri)) {
+        Update-MgApplication -ApplicationId $mgApp.Id -IdentifierUris @($desiredIdUri) | Out-Null
         Write-Host "`t`t→ Identifier URI set to $desiredIdUri" -ForegroundColor Green
+    } else {
+        Write-Host "`t`t→ Identifier URI already $desiredIdUri" -ForegroundColor Green
     }
 
-    # 3) Add the Easy-Auth redirect URI if missing
-    $redirect = "https://app-$CompanyCode-ncce.azurewebsites.net/.auth/login/aad/callback"
-    if (-not ($app.web.redirectUris -contains $redirect)) {
-        $patch = @{ web = @{ redirectUris = $app.web.redirectUris + @($redirect) } }
-        Update-MgApplication -ApplicationId $app.Id -BodyParameter $patch | Out-Null
-        Write-Host "`t`t→ Added redirect URI $redirect" -ForegroundColor Green
-    }
-
-    $info = "App multi-tenant; clientId=$($app.AppId)"
+    $info = "App multi-tenant; clientId=$($mgApp.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP2: Create/Update App"; Info = $info }
+
+    $global:Artefacts.TokenRotatorClientId = $global:app2.AppId
 }
 
 
@@ -249,58 +297,57 @@ function TaskSP2CreateSP {
 function TaskSP2AddFic {
     Write-Host "`t🔗 [Task] SP2 – Ensure FIC for UAMI…" -ForegroundColor Magenta
 
+    # If UAMI wasn’t supplied, warn + skip
     if (-not $script:UamiPrincipalId) {
-        throw "UAMI must be created first."
+        Write-Warning "UAMI not configured – skipping FIC creation for Token-Rotator."
+        $global:stepResults += @{ Name = "SP2: Add FIC"; Info = "Skipped (no UAMI)" }
+        return
     }
 
+    # Make sure we’re on the right tenant and the app is visible in Graph
     Use-GraphTenant -TenantId $global:tenantId
+    $null = Get-MgApplicationEventually -ObjectId $global:app2.Id -AppId $global:app2.AppId
 
     $issuer  = "https://login.microsoftonline.com/$($global:tenantId)/v2.0"
     $subject = $script:UamiPrincipalId
     $ficName = "uami-fic"
 
-    # 1) Fetch any existing FIC by name+issuer+subject
+    # Check if an identical FIC already exists
     $existing = Get-MgApplicationFederatedIdentityCredential `
-                  -ApplicationId $app2.Id `
+                  -ApplicationId $global:app2.Id `
                   -ErrorAction SilentlyContinue |
                 Where-Object {
-                  $_.Name    -eq $ficName  -and
-                  $_.Issuer  -eq $issuer   -and
-                  $_.Subject -eq $subject
+                    $_.Name -eq $ficName -and $_.Issuer -eq $issuer -and $_.Subject -eq $subject
                 }
 
-    if ($null -eq $existing) {
-        try {
-            # 2) Create only if nothing matched
-            New-MgApplicationFederatedIdentityCredential `
-              -ApplicationId $app2.Id `
-              -BodyParameter @{
-                  name      = $ficName
-                  issuer    = $issuer
-                  subject   = $subject
-                  audiences = @('api://AzureADTokenExchange')
-              } `
-              -ErrorAction Stop
-
-            Write-Host "`t`t→ FIC created" -ForegroundColor Green
-        }
-        catch {
-            # 3) Swallow 409s and rethrow anything else
-            if ($_.Exception.Response.StatusCode.Value__ -eq 409) {
-                Write-Host "`t`t→ FIC already exists (409 conflict)" -ForegroundColor Yellow
-            }
-            else {
-                throw
-            }
-        }
-    }
-    else {
+    if ($existing) {
         Write-Host "`t`t→ FIC already exists" -ForegroundColor Green
+        $global:stepResults += @{ Name = "SP2: Add FIC"; Info = "issuer=$issuer; name=$ficName (exists)" }
+        return
     }
 
-    $global:stepResults += @{
-      Name = "SP2: Add FIC"
-      Info = "issuer=$issuer; name=$ficName"
+    try {
+        New-MgApplicationFederatedIdentityCredential `
+            -ApplicationId $global:app2.Id `
+            -BodyParameter @{
+                name      = $ficName
+                issuer    = $issuer
+                subject   = $subject
+                audiences = @('api://AzureADTokenExchange')
+            } `
+            -ErrorAction Stop | Out-Null
+
+        Write-Host "`t`t→ FIC created" -ForegroundColor Green
+        $global:stepResults += @{ Name = "SP2: Add FIC"; Info = "issuer=$issuer; name=$ficName (created)" }
+    }
+    catch {
+        $status = $_.Exception.Response.StatusCode.Value__ 2>$null
+        if ($status -eq 409 -or $_.Exception.Message -match 'already exists') {
+            Write-Host "`t`t→ FIC already exists (409 conflict)" -ForegroundColor Yellow
+            $global:stepResults += @{ Name = "SP2: Add FIC"; Info = "issuer=$issuer; name=$ficName (exists)" }
+        } else {
+            throw
+        }
     }
 }
 
@@ -309,11 +356,8 @@ function TaskSP2AddFic {
 function TaskSP1GraphPermission {
     Write-Host "`t🔐 [Task] SP1 – Grant Directory.ReadWrite.All via Graph..." -ForegroundColor Yellow
 
-    # Helper-Modul für Graph-Berechtigungen laden
-    Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" `
-        -Force -ErrorAction Stop -DisableNameChecking
+    Import-Module "$PSScriptRoot/Modules/GraphPermissionHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
-    # Wir übergeben hier die ObjectId der Azure AD Application (nicht die SP-Id)
     Add-GraphAppPermission `
         -AppObjectId     $global:app1.Id `
         -GraphAppId      '00000003-0000-0000-c000-000000000000' `
@@ -473,7 +517,7 @@ function TaskSP1GraphDirRole {
 
     Import-Module "$PSScriptRoot/Modules/GraphDirectoryRoleHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
     
-    # App-Objekt ins Mg holen (falls nötig)
+    # Ensure the app exists in Graph
     $mgApp1 = Get-MgApplication -Filter "appId eq '$($global:app1.AppId)'"
     if (-not $mgApp1) {
         throw "[Task] ERROR: Cannot find Graph Application with appId = '$($global:app1.AppId)'."
@@ -488,27 +532,44 @@ function TaskSP1GraphDirRole {
     $global:stepResults += @{ Name = "SP1: Assign Graph Dir Role (App Admin)"; Info = $info }
 }
 
+# --------------------------- Confluence Export ---------------------------
 function TaskExportConfluenceDoc {
     Write-Host "`t📄 [Task] Exporting Confluence documentation..." -ForegroundColor Magenta
 
-    Import-Module "$PSScriptRoot/Modules/ConfluenceDoc.generated.psm1" -Force -ErrorAction Stop
+    $modulePath = Join-Path $PSScriptRoot 'Modules/ConfluenceDoc.generated.psm1'
+    $outputFile = Join-Path $PSScriptRoot 'NCCE_Confluence_Documentation.md'
 
-    $outputFile = "$PSScriptRoot/NCCE_Confluence_Documentation.md"
-    Export-NcceConfluenceConfiguration `
-        -TenantName $global:contexts.Azure.Tenant.Name `
-        -OutputFile $outputFile
+    if (-not (Test-Path $modulePath)) {
+        Write-Warning "Confluence module not found at $modulePath – skipping export."
+        $global:stepResults += @{ Name = "Export Confluence Doc"; Info = "Skipped (module missing)" }
+        return
+    }
 
-    Write-Host "`t✅ [Task] Confluence doc exported to: $outputFile`n" -ForegroundColor Green
-    $global:stepResults += @{ Name = "Export Confluence Doc"; Info = "Documentation exported to $outputFile" }
+    try {
+        Import-Module $modulePath -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Failed to load Confluence module: $($_.Exception.Message)"
+        $global:stepResults += @{ Name = "Export Confluence Doc"; Info = "Skipped (module load failed)" }
+        return
+    }
+
+    try {
+        Export-NcceConfluenceConfiguration -TenantName $global:contexts.Azure.Tenant.Name -OutputFile $outputFile
+        Write-Host "`t✅ [Task] Confluence doc exported to: $outputFile`n" -ForegroundColor Green
+        $global:stepResults += @{ Name = "Export Confluence Doc"; Info = "Documentation exported to $outputFile" }
+    }
+    catch {
+        Write-Warning "Confluence export failed: $($_.Exception.Message)"
+        $global:stepResults += @{ Name = "Export Confluence Doc"; Info = "Failed ($($_.Exception.Message))" }
+    }
 }
+
 
 # --------------------------- Main Execution & Workflow ---------------------------
 Show-Banner
 
-# ---------------------------
-# Resolve UAMI up-front (create or reuse only if no inputs)
-# ---------------------------
-# If all three UAMI params are non-empty, seed the script variables.
+# Resolve UAMI up-front (create or reuse only if inputs are provided)
 if ($UamiClientId -and $UamiPrincipalId -and $UamiResourceId) {
   Write-Host "✔️  UAMI configured; will use:"
   Write-Host "     ClientId   = $UamiClientId"
@@ -522,13 +583,10 @@ else {
   Write-Host "⚠️  No UAMI configuration provided; skipping UAMI creation and any UAMI-dependent steps." -ForegroundColor Yellow
 }
 
-
-
 $steps = @(
     @{ Name = "Prepare Environment";                                            Action = { SetupEnvironment             } },
     @{ Name = "Login to Azure & Microsoft Graph";                               Action = { TaskInitAuth                 } },
-    @{ Name = "Select Target Subscription";                                     Action = { TaskSelectTargetSubscription } },
-    #@{ Name = "Create / Re-use UAMI";                                           Action = { TaskCreateOrUseUami          } },
+    @{ Name = "Select Target Subscription";                                     Action = { TaskSelectTargetSubscription } },                     
     @{ Name = "Provisioner App: Create Application";                            Action = { TaskSP1CreateApp             } },
     @{ Name = "Provisioner App: Create Service Principal";                      Action = { TaskSP1CreateSP              } },
     @{ Name = "Provisioner App: Create Client Secret";                          Action = { TaskSP1CreateCredential      } },
@@ -540,43 +598,42 @@ $steps = @(
     @{ Name = "Provisioner: Create & Assign 'Subscription Provisioner' Role";   Action = { TaskSP1RBACCustomRole1       } },
     @{ Name = "Provisioner: Create & Assign 'Management Administrator' Role";   Action = { TaskSP1RBACCustomRole2       } },
     @{ Name = "Provisioner: Assign 'Application Administrator' Directory Role"; Action = { TaskSP1GraphDirRole          } },
+    @{ Name = "Export Confluence Documentation";                                Action = { TaskExportConfluenceDoc      } },
     @{ Name = "Disconnect from Graph for your Safety";                          Action = { Disconnect-MgGraph           } }
 )
 
 $total = $steps.Count
-
 for ($i = 0; $i -lt $total; $i++) {
     $stepIndex   = $i + 1
     $currentStep = $steps[$i].Name
     $percent     = [int]($stepIndex / $total * 100)
 
-    # Show progress bar with percentage
-    Write-Progress `
-        -Id               1 `
-        -Activity         "Cloud Engine Setup Progress: $percent% Complete" `
-        -Status           "Step $stepIndex/$total – $currentStep" `
-        -PercentComplete  $percent
+    Write-Progress -Id 1 -Activity "Cloud Engine Setup Progress: $percent% Complete" -Status "Step $stepIndex/$total – $currentStep" -PercentComplete $percent
 
     Write-Host "🎬 [Workflow] Starting: $currentStep" -ForegroundColor Cyan
     & $steps[$i].Action
     Write-Host "✅ [Workflow] Completed: $currentStep`n" -ForegroundColor Cyan
 }
 
-# Mark the progress as complete (clears the bar)
 Write-Progress -Id 1 -Activity "☁️ NCCE Setup Progress" -Completed
+
 # --------------------------- Summary ---------------------------
 Write-Host "`n📑  Step Summary:" -ForegroundColor Cyan
 
-# Determine padding based on the longest step name
+# Determine padding based on the longest step name (by length, not value)
 $maxNameLength = ($global:stepResults | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
 
 foreach ($entry in $global:stepResults) {
     $paddedName = $entry.Name.PadRight($maxNameLength)
-
-    # Green checkmark, white for name, gray separator, cyan for info
     Write-Host "  ✅ " -NoNewline -ForegroundColor Green
     Write-Host $paddedName -NoNewline -ForegroundColor White
     Write-Host " : " -NoNewline -ForegroundColor Gray
     Write-Host $entry.Info -ForegroundColor Cyan
 }
 Write-Host ""
+
+# --------------------------- Output Parameters ---------------------------
+Write-CredentialSummary -Data $global:Artefacts
+
+# Return outputs for programmatic consumption (CI/CD etc.)
+return $global:Artefacts
