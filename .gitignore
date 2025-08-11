@@ -11,4 +11,4 @@ __pycache__/
 # Ignore Jupyter Notebook metadata
 .ipynb
 # Ignore Jupyter Notebook configuration files
-.jupyter/           
+.jupyter/           NCCE_Credentials.json
