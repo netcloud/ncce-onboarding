@@ -45,4 +45,56 @@ function Get-OrCreate-AzAppCredential {
     return @{ SecretText = $pwdCred.SecretText; NewSecret = $true }
 }
 
-Export-ModuleMember -Function Get-OrCreate-AzApp, Get-OrCreate-AzServicePrincipal, Get-OrCreate-AzAppCredential
+function Ensure-AppApiUriAndScope {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$AppObjectId,   # Graph objectId
+        [Parameter(Mandatory)][string]$AppId,         # clientId (guid)
+        [string]$ScopeName = 'user_impersonation',
+        [string]$ScopeDisplayName = 'Access Token Rotator API',
+        [string]$ScopeDescription = 'Allow the app to access the Token Rotator API on your behalf'
+    )
+
+    # Wait until app is visible in Graph
+    $mgApp = Get-MgApplicationEventually -ObjectId $AppObjectId -AppId $AppId
+    $desiredIdUri = "api://$AppId"
+
+    $needsUri = -not ($mgApp.IdentifierUris -contains $desiredIdUri)
+
+    # Existing scopes (if any)
+    $scopes = @()
+    if ($mgApp.Api -and $mgApp.Api.Oauth2PermissionScopes) {
+        $scopes = @($mgApp.Api.Oauth2PermissionScopes)
+    }
+
+    $scopeExists = $false
+    foreach ($s in $scopes) {
+        if ($s.Value -eq $ScopeName -and $s.IsEnabled) { $scopeExists = $true; break }
+    }
+
+    if (-not $scopeExists) {
+        $scopes = $scopes + @{
+            id                      = [guid]::NewGuid()
+            value                   = $ScopeName
+            type                    = 'User'    # delegated permission
+            adminConsentDisplayName = $ScopeDisplayName
+            adminConsentDescription = $ScopeDescription
+            isEnabled               = $true
+        }
+    }
+
+    if ($needsUri -or -not $scopeExists) {
+        $body = @{
+            identifierUris = @($desiredIdUri)
+            api = @{
+                oauth2PermissionScopes = $scopes
+            }
+        }
+        Update-MgApplication -ApplicationId $mgApp.Id -BodyParameter $body | Out-Null
+    }
+
+    return $desiredIdUri
+}
+
+
+Export-ModuleMember -Function Get-OrCreate-AzApp, Get-OrCreate-AzServicePrincipal, Get-OrCreate-AzAppCredential, Ensure-AppApiUriAndScope

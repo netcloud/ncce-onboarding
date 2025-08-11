@@ -116,25 +116,25 @@ function Get-MgApplicationEventually {
 # --------------------------- Credential Summary Output ---------------------------
 function Write-CredentialSummary {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][pscustomobject]$Data,
-        [string]$Path = "$PSScriptRoot/NCCE_Credentials.json"
-    )
+    param([Parameter(Mandatory)][pscustomobject]$Data)
 
     $line = ('═' * 65)
     Write-Host "`n$line" -ForegroundColor Cyan
-    Write-Host "   NCCE – Service-Principal Credentials" -ForegroundColor White
+    Write-Host "   NCCE – Credentials (displayed once)" -ForegroundColor White
     Write-Host $line -ForegroundColor Cyan
 
-    $props = $Data.PSObject.Properties | Where-Object { $_.Value -ne $null -and $_.Value -ne '' }
-    $pad   = ($props | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
-    foreach ($p in $props) {
-        "{0} : {1}" -f $p.Name.PadRight($pad), $p.Value | Write-Host -ForegroundColor Green
+    $rows = [ordered]@{
+        'Service Principal Client ID'               = $Data.ProvisionerClientId
+        'Service Principal Client Secret'           = $(if ($Data.ProvisionerClientSecret) { $Data.ProvisionerClientSecret } else { '(unchanged – value not shown)' })
+        'Service Principal Token Rotator Client ID' = $Data.TokenRotatorClientId
+    }
+
+    $pad = ($rows.Keys | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum
+    foreach ($k in $rows.Keys) {
+        "{0} : {1}" -f $k.PadRight($pad), $rows[$k] | Write-Host -ForegroundColor Green
     }
 
     Write-Host $line -ForegroundColor Cyan
-    $Data | ConvertTo-Json -Depth 3 | Set-Content -Path $Path -Encoding utf8
-    Write-Host "   → JSON copy written to $Path`n" -ForegroundColor Yellow
 }
 
 # --------------------------- Create or Reuse UAMI ---------------------------
@@ -173,9 +173,14 @@ function SetupEnvironment {
     Import-Module "$PSScriptRoot/Modules/ModuleVenvHelper.psm1" -Force -ErrorAction Stop
     Enable-ModuleVenv
 
+    # Ensure we load the freshly edited local modules
+    Remove-Module AzureSpHelper -ErrorAction SilentlyContinue
+    Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -DisableNameChecking
+
     Write-Host "`t✅ [Env] Module environment ready.`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "Setup Environment"; Info = "Module environment ready" }
 }
+
 
 # --------------------------- Authentication ---------------------------
 function TaskInitAuth {
@@ -204,18 +209,20 @@ function TaskInitAuth {
 # --------------------------- SP1: sp-ncce-global-provisioner ---------------------------
 function TaskSP1CreateApp {
     Write-Host "`t⚙️ [Task] SP1 – Ensure App 'sp-ncce-global-provisioner' exists..." -ForegroundColor Magenta
-
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
     $global:app1Name = "sp-ncce-global-provisioner"
-    $global:app1 = Get-OrCreate-AzApp -DisplayName $app1Name -IdentifierUriBase "https://$domain"
+    $global:app1 = Get-OrCreate-AzApp `
+        -DisplayName $app1Name `
+        -IdentifierUriBase "https://$domain" `
+        -Audience 'AzureADMyOrg'      # ← single-tenant
 
     $info = "AppName: $app1Name; Service Principal Client ID: $($app1.AppId)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP1: Create App"; Info = $info }
-
     $global:Artefacts.ProvisionerClientId = $global:app1.AppId
 }
+
 
 function TaskSP1CreateSP {
     Write-Host "`t⚙️ [Task] SP1 – Ensure Service Principal exists for App1..." -ForegroundColor Magenta
@@ -231,55 +238,50 @@ function TaskSP1CreateSP {
 
 function TaskSP1CreateCredential {
     Write-Host "`t⚙️ [Task] SP1 – Ensure client secret exists for App1..." -ForegroundColor Magenta
-
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -ErrorAction Stop -DisableNameChecking
 
     $credInfo1 = Get-OrCreate-AzAppCredential -AppId $global:app1.AppId
     $global:plainPassword1 = $credInfo1.SecretText
+    $global:Artefacts.ProvisionerClientSecret = $global:plainPassword1  # used ONLY for final one-time console output
 
-    if ($plainPassword1) {
-        $info = "AppName: $app1Name; New secret: $plainPassword1"
-        Write-Host "`t`t→ $info`n" -ForegroundColor Red
+    if ($credInfo1.NewSecret -and $global:plainPassword1) {
+        Write-Host "`t`t→ New secret generated" -ForegroundColor Yellow   # no value printed
     } else {
-        $info = "AppName: $app1Name; Existing secret reused"
-        Write-Host "`t`t→ $info`n" -ForegroundColor Green
+        Write-Host "`t`t→ Existing secret present (unchanged)" -ForegroundColor Green
     }
 
-    $global:stepResults += @{ Name = "SP1: Create Credential"; Info = $info }
-
-    $global:Artefacts.ProvisionerClientSecret = $global:plainPassword1
+    $global:stepResults += @{
+        Name = "SP1: Create Credential"
+        Info = $(if ($credInfo1.NewSecret) { "New secret generated" } else { "Existing secret reused" })
+    }
 }
+
 
 # --------------------------- SP2: sp-ncce-token-rotator ---------------------------
 function TaskSP2CreateApp {
     Write-Host "`t⚙️ [Task] SP2 – Ensure multi-tenant app '$app2Name'…" -ForegroundColor Magenta
     Import-Module "$PSScriptRoot/Modules/AzureSpHelper.psm1" -Force -DisableNameChecking
 
-    # Create the multi-tenant app WITHOUT IdentifierUris; api:// must equal the final AppId
+    # Create WITHOUT IdentifierUris; multi-tenant
     $global:app2 = Get-OrCreate-AzApp `
-                     -DisplayName $global:app2Name `
-                     -Audience    'AzureADMultipleOrgs'
+        -DisplayName $global:app2Name `
+        -Audience    'AzureADMultipleOrgs'    # ← multi-tenant
 
-    # Switch Graph to the right tenant
     Use-GraphTenant -TenantId $global:tenantId
 
-    # Wait for Graph consistency, then set identifier URI = api://{appId}
-    $mgApp = Get-MgApplicationEventually -ObjectId $global:app2.Id -AppId $global:app2.AppId
-    $desiredIdUri = "api://$($global:app2.AppId)"
+    # Ensure api://{clientId} and an OAuth2 delegated scope exist
+    $apiUri = Ensure-AppApiUriAndScope -AppObjectId $global:app2.Id -AppId $global:app2.AppId `
+              -ScopeName 'user_impersonation' `
+              -ScopeDisplayName 'Access Token Rotator API' `
+              -ScopeDescription 'Allow access to Token Rotator API as the signed-in user'
 
-    if (-not ($mgApp.IdentifierUris -contains $desiredIdUri)) {
-        Update-MgApplication -ApplicationId $mgApp.Id -IdentifierUris @($desiredIdUri) | Out-Null
-        Write-Host "`t`t→ Identifier URI set to $desiredIdUri" -ForegroundColor Green
-    } else {
-        Write-Host "`t`t→ Identifier URI already $desiredIdUri" -ForegroundColor Green
-    }
-
-    $info = "App multi-tenant; clientId=$($mgApp.AppId)"
+    $info = "App multi-tenant; clientId=$($global:app2.AppId); resourceUri=$apiUri; scope=$apiUri/user_impersonation"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP2: Create/Update App"; Info = $info }
 
     $global:Artefacts.TokenRotatorClientId = $global:app2.AppId
 }
+
 
 
 function TaskSP2CreateSP {
@@ -634,6 +636,3 @@ Write-Host ""
 
 # --------------------------- Output Parameters ---------------------------
 Write-CredentialSummary -Data $global:Artefacts
-
-# Return outputs for programmatic consumption (CI/CD etc.)
-return $global:Artefacts
