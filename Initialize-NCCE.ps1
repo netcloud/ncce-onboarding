@@ -36,6 +36,7 @@ function Show-Banner {
 # (Single canonical object; do NOT redefine elsewhere.)
 $global:Artefacts = [pscustomobject]@{
     ProvisionerClientId      = $null
+    ProvisionerObjectId      = $null
     ProvisionerClientSecret  = $null
     TokenRotatorClientId     = $null
 }
@@ -124,6 +125,7 @@ function Write-CredentialSummary {
     Write-Host $line -ForegroundColor Cyan
 
     $rows = [ordered]@{
+        'Service Principal Object ID'               = $Data.ProvisionerObjectId
         'Service Principal Client ID'               = $Data.ProvisionerClientId
         'Service Principal Client Secret'           = $(if ($Data.ProvisionerClientSecret) { $Data.ProvisionerClientSecret } else { '(unchanged – value not shown)' })
         'Service Principal Token Rotator Client ID' = $Data.TokenRotatorClientId
@@ -234,6 +236,7 @@ function TaskSP1CreateSP {
     $info = "AppName: $app1Name; ObjectId: $($sp1.Id)"
     Write-Host "`t`t→ $info`n" -ForegroundColor Green
     $global:stepResults += @{ Name = "SP1: Create Service Principal"; Info = $info }
+    $global:Artefacts.ProvisionerObjectId = $global:sp1.Id
 }
 
 function TaskSP1CreateCredential {
