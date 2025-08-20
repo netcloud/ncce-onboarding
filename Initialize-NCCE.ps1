@@ -434,7 +434,8 @@ function TaskSP1RBACCustomRole1 {
     "Microsoft.Insights/diagnosticSettings/*",
     "Microsoft.KeyVault/vaults/*",
     "Microsoft.KeyVault/register/action",
-    "Microsoft.Insights/diagnosticSettings/*"
+    "Microsoft.Insights/diagnosticSettings/*",
+    "Microsoft.Network/natGateways/*"
   ],
   "AssignableScopes": [
     "$mgScope"
