@@ -283,6 +283,23 @@ function TaskSP2CreateApp {
     $global:stepResults += @{ Name = "SP2: Create/Update App"; Info = $info }
 
     $global:Artefacts.TokenRotatorClientId = $global:app2.AppId
+
+    # Ensure redirect URI https://jwt.ms exists (Web platform)
+    $redirectUri = "https://jwt.ms"
+    Use-GraphTenant -TenantId $global:tenantId
+    $app2 = Get-MgApplication -ApplicationId $global:app2.Id
+
+    if (-not ($app2.Web.RedirectUris -contains $redirectUri)) {
+        Update-MgApplication -ApplicationId $global:app2.Id -Web @{
+            RedirectUris = ($app2.Web.RedirectUris + $redirectUri)
+        }
+        Write-Host "`t`t→ Redirect URI $redirectUri added" -ForegroundColor Green
+        $global:stepResults += @{ Name = "SP2: Add Redirect URI"; Info = "Added $redirectUri" }
+    } else {
+        Write-Host "`t`t→ Redirect URI $redirectUri already present" -ForegroundColor Green
+        $global:stepResults += @{ Name = "SP2: Add Redirect URI"; Info = "Already present" }
+    }
+
 }
 
 
